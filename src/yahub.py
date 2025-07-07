@@ -13,13 +13,10 @@ from config import Config
 from yinflux import Yinflux
 from yrun import Yrun
 
-
-
 NAME = 'yahub'
-VERSION = 0.29
+VERSION = 0.33
 
-
-# this concept of topic and payload concept comes from node-red
+# the concept of topic and payload concept comes from node-red
 
 class Msg() :
   topic = 'etc'
@@ -32,7 +29,6 @@ class Msg() :
 
 
 def prepareDataForInflux(msg):
-
   msg.measurement = 'sensor'
   msg.fieldSet = {}
   msg.tags = { 'inverter' : 'A' }
@@ -42,7 +38,6 @@ def prepareDataForInflux(msg):
 
 
 class Yahub:
-
   consumersOfData = []
   consumersOfControl = []
   #threads = []
@@ -70,48 +65,75 @@ class Yahub:
 
   def start(self):
     try:
-      #logging.getLogger("asyncio").setLevel(logging.DEBUG)
       asyncio.run(self.run(), debug=False)
+    except TerminateTaskGroup as tge:
+      texxt = f"signame received : stopping"
+      self.logger.info(texxt)
+
     except RuntimeError as re:
       self.logger.error(re)
     except ExceptionGroup as eg:
       self.logger.exception(eg)
     except KeyboardInterrupt:
       self.logger.info("interrupted.")
+      #await asyncio.sleep(2.0)  # simulate some async clean-up
+
+    self.logger.info(f"Shutdown complete")   # never reached
+
 
   async def ask_exit(self, signame):
-    texxt = f"{signame} received : stopping"
-    self.route([Msg(__name__, texxt)])
-    self.logger.info(texxt)
-    await asyncio.sleep(2.0)  # simulate some async clean-up
-    loop = asyncio.get_event_loop()
-    loop.stop()
+    self.logger.info(f"{signame} received : stopping")
+
+    #await asyncio.sleep(2.0)  # simulate some async clean-up
+    #loop = asyncio.get_event_loop()
+    #loop.stop()
+
+  '''
+  The code below seems to deliver clean exit, however bizarre it is
+  It seems important to not cancel Task-1
+  '''
+
+  async def ask_exit(self, tg, signame):
+    names = []
+    for task in asyncio.all_tasks():
+      name = task.get_name()
+      if name != 'Task-1' :
+        names.append(name)
+        task.cancel()
+    self.logger.info(f'terminating: {' '.join(names)}')
+
+  async def ask_exit3(self, tg, signame):
+    tg.cancel()
+    self.logger.info(f'terminating')
 
 
   async def run(self):
 
     config = None
-    with open('config.yaml') as yfile:
+    configFile = 'yahub.yaml'
+    with open(configFile) as yfile:
       config = Config(yaml.safe_load(yfile))
-    self.logger.info(f'loaded config from config.yaml')
+    self.logger.info(f'loaded config from {configFile}')
 
     async with asyncio.TaskGroup() as tg:
       loop = asyncio.get_event_loop()
       for signame in ('SIGINT', 'SIGTERM'):
           loop.add_signal_handler(getattr(signal, signame),
-                                  lambda signame=signame: tg.create_task(self.ask_exit(signame),name='SignalHandler'))
+                                  lambda signame=signame: tg.create_task(self.ask_exit(tg, signame),name='SignalHandler'))
+
+      from yrun import getIP
+      self.logger.info(f'IP address {getIP()}')
 
       self.yrun = Yrun(self, config, 'yrun')
-      stask = tg.create_task(self.yrun.run(), name='yrun')
+      self.stask = tg.create_task(self.yrun.run(), name='yrun')
 
       from ymqtt import Ymqtt
       ymqtt = Ymqtt(self, config,'cloudMQTT',)
-      task = tg.create_task(ymqtt.run(), name='cloudMQTTX')
+      self.qtask = tg.create_task(ymqtt.run(), name='cloudMQTTX')
 
       self.queueLogHandler.addListener(ymqtt)
-      ltask = tg.create_task(self.queueLogHandler.run(), name='AsyncioQueueLogHandler')
+      self.ltask = tg.create_task(self.queueLogHandler.run(), name='AsyncioQueueLogHandler')
 
-      #threads.append(ymqtt.thread)
       self.consumersOfData.append(ymqtt)
       self.consumersOfControl.append(ymqtt)
 
@@ -122,23 +144,13 @@ class Yahub:
         #yinflux.start()
         #tasks.append(yinflux.thread)
         self.consumersOfData.append(yinflux)
-      from yrun import getIP
-      self.logger.info(f'IP address {getIP()}')
 
       from ymodbus import Ymodbus
-      ymodbus = Ymodbus(self, config,'serialModbus')
-      mtask = asyncio.create_task(ymodbus.run(), name='serialModbusX')
-
-  #   tasks.add(mtask)
-      # To prevent keeping references to finished tasks forever,
-      # make each task remove its own reference from the set after
-      # completion:
-  #    mtask.add_done_callback(background_tasks.discard)
+      self.ymodbus = Ymodbus(self, config,'serialModbus')
+      self.mtask = asyncio.create_task(self.ymodbus.run(), name='serialModbusX')
 
       self.logger.info('startup completed')
 
-    #logging.debug(f"Both tasks have completed now: {task.result()}, {mtask.result()}")
-    self.logger.debug(f"Shutdown complete")
 
 
   def route(self, msg):
