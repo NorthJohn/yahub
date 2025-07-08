@@ -1,0 +1,16 @@
+[Unit]
+Description=yahub
+After=network.target
+
+[Service]
+PIDFile=/run/yahub/pid
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/yahub
+ExecStart=/home/pi/py3/bin/python3 src/yahub.py
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s TERM $MAINPID
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
