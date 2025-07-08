@@ -1,0 +1,10 @@
+[Unit]
+Description=Shutdown at dusk
+
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/shutdown -h now
+
+[Install]
+WantedBy=multi-user.target
