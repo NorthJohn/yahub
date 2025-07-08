@@ -29,16 +29,24 @@ class Yrun:
     self.logger.debug('coroutine started')
     while True :
       msg = await self.queue.get()
-      args = msg.payload.split(' ')
+      args = msg.payload.strip().split(' ')
       self.logger.debug(f"excecuting: {args}")
       res = subprocess.run(args, capture_output=True, encoding="UTF-8")
-      self.logger.info(f"result    : {res.returncode} {res}")
       from yahub import Msg
-      reply = Msg('response/run/subprocess', res.stderr if res.returncode else res.stdout)
-      for consumer in self.yahub.consumersOfControl:
-        consumer.enqueue(reply)
-        self.queue.task_done()
 
+      replies = []
+      if res.returncode:
+        replies.append(Msg('response/run/subprocess', res.returncode))
+        self.logger.warning(f"result    : {res.returncode} {res}")
+      else :
+        logLines = res.stdout.split('\n')
+        for line in logLines:
+            replies.append(Msg('response/run/subprocess', line))
+            self.logger.debug(f"result    : {line}")
+      for reply in replies:
+        for consumer in self.yahub.consumersOfControl:
+          consumer.enqueue(reply)
+      self.queue.task_done()
 
 
 def getIP():
