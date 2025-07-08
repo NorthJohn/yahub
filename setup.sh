@@ -37,14 +37,14 @@ cd  $HOME/yahub
 cp  yahub.config.minimal.yaml yahub.config.yaml
 
 echo "### Get access to serial port ###"
-sudo usermod -a -G dialout pi
+sudo usermod -a -G dialout $USER
 
 echo "### Creating run directory ###"
 sudo mkdir /run/yahub
-sudo chown -R pi:pi /run/yahub
+sudo chown -R $USER:$USER /run/yahub
 
 echo "### Setting up systemd ###"
-sudo cp yahub.service /etc/systemd/system/
+sudo ln -s  -t /etc/systemd/system/  $HOME/yahub/yahub.service
 sudo systemctl enable yahub
 
 #echo "### Setting up shutdown before solar inverters shut the power off  ###"
