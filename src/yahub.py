@@ -100,7 +100,7 @@ class Yahub:
       if name != 'Task-1' :
         names.append(name)
         task.cancel()
-    self.logger.info(f'terminating: {' '.join(names)}')
+    self.logger.info(f"terminating: {' '.join(names)}")
 
   async def ask_exit3(self, tg, signame):
     tg.cancel()

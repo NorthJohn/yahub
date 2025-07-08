@@ -133,7 +133,7 @@ class Ymodbus:
           self.logger.exception(f"Received exception from device ({me})")
 
         self.yahub.route(msgs)
-        self.logger.info(f'{slave['name']}: {len(msgs)} modbus registers read: {firstTopic} → {lastTopic}')
+        self.logger.info(f"{slave['name']}: {len(msgs)} modbus registers read: {firstTopic} → {lastTopic}")
 
       except ConnectionException as me :
         self.logger.warning(str(me))
