@@ -1,20 +1,22 @@
 
 
 import logging, argparse
-import csv,yaml,re
+import csv,re,yaml
 import atexit, signal
 import math,time
 import asyncio
+#from asyncio import TaskGroup
+
 import time
+
 
 from config import Config
 
-#from ymodbus import Ymodbus
-from yinflux import Yinflux
 from yrun import Yrun
 
+
 NAME = 'yahub'
-VERSION = 0.33
+VERSION = 0.34
 
 # the concept of topic and payload concept comes from node-red
 
@@ -37,6 +39,10 @@ def prepareDataForInflux(msg):
   return msg
 
 
+class TerminateTaskGroup(Exception):
+    """Exception raised to terminate a task group."""
+
+
 class Yahub:
   consumersOfData = []
   consumersOfControl = []
@@ -56,7 +62,6 @@ class Yahub:
     # set a format
     formatter = logging.Formatter('%(asctime)s %(levelname)-3s %(module)s %(message)s', datefmt='%H:%M:%S')
     self.queueLogHandler.setFormatter(formatter)
-    #self.queueLogHandler.setLevel('INFO')
     logging.getLogger('').addHandler(self.queueLogHandler)
 
 
@@ -66,49 +71,18 @@ class Yahub:
   def start(self):
     try:
       asyncio.run(self.run(), debug=False)
-    except TerminateTaskGroup as tge:
-      texxt = f"signame received : stopping"
-      self.logger.info(texxt)
+    except* TerminateTaskGroup as tge:
+      self.logger.debug(f"async taskgroup terminated")
 
-    except RuntimeError as re:
-      self.logger.error(re)
-    except ExceptionGroup as eg:
-      self.logger.exception(eg)
-    except KeyboardInterrupt:
-      self.logger.info("interrupted.")
-      #await asyncio.sleep(2.0)  # simulate some async clean-up
+    self.logger.info(f"shutdown complete")
 
-    self.logger.info(f"Shutdown complete")   # never reached
-
-
-  async def ask_exit(self, signame):
-    self.logger.info(f"{signame} received : stopping")
-
-    #await asyncio.sleep(2.0)  # simulate some async clean-up
-    #loop = asyncio.get_event_loop()
-    #loop.stop()
-
-  '''
-  The code below seems to deliver clean exit, however bizarre it is
-  It seems important to not cancel Task-1
-  '''
 
   async def ask_exit(self, tg, signame):
-    names = []
-    for task in asyncio.all_tasks():
-      name = task.get_name()
-      if name != 'Task-1' :
-        names.append(name)
-        task.cancel()
-    self.logger.info(f"terminating: {' '.join(names)}")
-
-  async def ask_exit3(self, tg, signame):
-    tg.cancel()
-    self.logger.info(f'terminating')
+    self.logger.info(f"shutdown initiated, {signame} received")
+    raise TerminateTaskGroup()
 
 
   async def run(self):
-
     config = None
     configFile = 'yahub.yaml'
     with open(configFile) as yfile:
@@ -139,15 +113,23 @@ class Yahub:
 
       ymqtt.subscribe('request/#')
 
-      if False:
+      if config.get('cloudInflux','enable', False):
+        self.logger.info(f'infl')
+        from yinflux import Yinflux
         yinflux = Yinflux(config, 'cloudInflux')
-        #yinflux.start()
-        #tasks.append(yinflux.thread)
+        self.itask = tg.create_task(yinflux.run(), name='cloudInflux')
         self.consumersOfData.append(yinflux)
 
-      from ymodbus import Ymodbus
-      self.ymodbus = Ymodbus(self, config,'serialModbus')
-      self.mtask = asyncio.create_task(self.ymodbus.run(), name='serialModbusX')
+      if config.get('serialModbus','enable', False):
+        from ymodbus import Ymodbus
+        self.ymodbus = Ymodbus(self, config, 'serialModbus')
+        self.mtask = tg.create_task(self.ymodbus.run(), name='serialModbusX')
+
+      if config.get('oneWire', 'enable', False):
+        from yonewire import Yonewire
+        self.yonewire = Yonewire(self, config,'oneWire')
+        #if false and self.yonewire.enable:
+        self.otask = tg.create_task(self.yonewire.run(), name='oneWire')
 
       self.logger.info('startup completed')
 
@@ -170,10 +152,10 @@ class Yahub:
           consumer.enqueue(msg)
 
       else:  # broadcast message
-        msgPrepped = prepareDataForInflux(msg)
+        #msgPrepped = prepareDataForInflux(msg)
         #self.logger.debug(f"Broadcasting {msgPrepped}")
         for consumer in self.consumersOfData:
-          consumer.enqueue(msgPrepped)
+          consumer.enqueue(msg)
 
 
  
