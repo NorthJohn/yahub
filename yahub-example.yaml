@@ -1,0 +1,63 @@
+
+
+serialModbus:
+  enable: false
+  port: /dev/ttyS0
+  map: map/RS485_MODBUS_Solis_inverters_2021-05-06.csv
+  slaves:
+    - { address: 1, name: inverterA }
+    - { address: 2, name: inverterB }
+  registers:
+    - MPPT 1I
+    - MPPT 2I
+    - MPPT 3I
+    - MPPT 4I
+    - MPPT 5I
+    - MPPT 6I
+    - MPPT 7I
+    - MPPT 8I
+
+    - MPPT 1V
+    - MPPT 2V
+    - MPPT 3V
+    - MPPT 4V
+    - MPPT 5V
+    - MPPT 6V
+    - MPPT 7V
+    - MPPT 8V
+
+  poll_interval: 60
+  poll_interval_offline: 300
+
+
+oneWire:
+  enable: true
+    poll_interval: 20
+    sensor-map:
+      28-3ce1045718a8 : s1
+      28-3ca4f6490ef8 : s2
+      28-3ce10457bb7c : s3
+      28-3ce104574362 : s4
+      sensor-location:
+        s2 : 'flowIn'
+        s3 : 'flowOut'
+
+cloudMQTT:
+  enable: true
+  host: abcdefgh.s1.eu.hivemq.cloud
+  port: 8883
+  username: abcd
+  password: efgh
+  use_ssl: true
+  keepalive: 600
+
+cloudInflux:
+  enable:  true
+  url:    "https://eu-central-1-1.aws.cloud2.influxdata.com"
+  token:  "abcdefgh=="
+  org:    myorg
+  bucket: sensors30d
+  async: false
+  batch_size: 1000
+  flush_interval: 30000
+
