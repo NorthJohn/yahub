@@ -1,11 +1,12 @@
 
 
-import logging, asyncio, socket
-import time
+import logging,asyncio,queue,time
+
 import paho.mqtt.client as mqtt
 
 from config import Config
-from yahub import Msg
+
+from yahub import Msg, TerminateTaskGroup
 
 class Ymqtt:
   connected = False
@@ -22,10 +23,6 @@ class Ymqtt:
     self.logger = logging.getLogger()
     self.subscribeTopics = []
 
-  def startJUNK(self):
-    self.thread = threading.Thread(target=self.run, daemon=True, name=self.root)
-    self.thread.start()
-
   def enqueue(self, msg):
     try :
       self.queue.put_nowait(msg)
@@ -41,7 +38,8 @@ class Ymqtt:
       self.publish(msg)
       self.queue.task_done()
       await asyncio.sleep(0.5)        # limit the message rate to 2 in case there's loooping
-
+    self.logger.exception(f'coroutine stopping {ex}')
+    raise TerminateTaskGroup();
 
   def connect(self):
     config = self.config
@@ -109,7 +107,7 @@ class Ymqtt:
 
   def onMessage(self, client, userdata, message):
     msg = Msg(message.topic, str(message.payload, 'utf-8'))
-    if 'request' in msg.topic:  # shouldn't be necessary
+    if 'request' in msg.topic:  # should already be filtered by route()
       self.logger.debug(msg)
       self.loop.call_soon_threadsafe(self.yahub.route, msg, context=None)
       #self.yahub.route(msg)
