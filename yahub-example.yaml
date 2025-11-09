@@ -32,15 +32,15 @@ serialModbus:
 
 oneWire:
   enable: true
-    poll_interval: 20
-    sensor-map:
-      28-3ce1045718a8 : s1
-      28-3ca4f6490ef8 : s2
-      28-3ce10457bb7c : s3
-      28-3ce104574362 : s4
-      sensor-location:
-        s2 : 'flowIn'
-        s3 : 'flowOut'
+  poll_interval: 20
+  sensor-map:
+    28-3ce1045718a8 : s1
+    28-3ca4f6490ef8 : s2
+    28-3ce10457bb7c : s3
+    28-3ce104574362 : s4
+  sensor-location:
+    s2 : 'flowIn'
+    s3 : 'flowOut'
 
 cloudMQTT:
   enable: true
