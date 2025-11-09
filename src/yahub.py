@@ -5,15 +5,10 @@ import csv,re,yaml
 import atexit, signal
 import math,time
 import asyncio
-#from asyncio import TaskGroup
-
-import time
-
 
 from config import Config
 
 from yrun import Yrun
-
 
 NAME = 'yahub'
 VERSION = 0.34
@@ -85,9 +80,9 @@ class Yahub:
   async def run(self):
     config = None
     configFile = 'yahub.yaml'
+    self.logger.info(f'{NAME} version {VERSION}, loading config from {configFile}')
     with open(configFile) as yfile:
       config = Config(yaml.safe_load(yfile))
-    self.logger.info(f'loaded config from {configFile}')
 
     async with asyncio.TaskGroup() as tg:
       loop = asyncio.get_event_loop()
@@ -111,10 +106,10 @@ class Yahub:
       self.consumersOfData.append(ymqtt)
       self.consumersOfControl.append(ymqtt)
 
+
       ymqtt.subscribe('request/#')
 
       if config.get('cloudInflux','enable', False):
-        self.logger.info(f'infl')
         from yinflux import Yinflux
         yinflux = Yinflux(config, 'cloudInflux')
         self.itask = tg.create_task(yinflux.run(), name='cloudInflux')
@@ -147,21 +142,19 @@ class Yahub:
         self.yrun.enqueue(msg)
         #self.logger.debug(f"route: {msg}")
 
-      elif re.match(r"^(|sys|log|__main__)", msg.topic):
+      elif re.match(r"^(sys|log)", msg.topic):
         for consumer in self.consumersOfControl:
           consumer.enqueue(msg)
 
       else:  # broadcast message
-        #msgPrepped = prepareDataForInflux(msg)
-        #self.logger.debug(f"Broadcasting {msgPrepped}")
+
+        self.logger.debug(f"Broadcasting {msg} to {len(self.consumersOfData)}")
         for consumer in self.consumersOfData:
           consumer.enqueue(msg)
 
 
  
 if __name__ == "__main__":
-
-  print(f"{NAME} version {VERSION}")
 
   usage = "%prog <commands>"
   parser = argparse.ArgumentParser(description='Yahub - Yet Another HUB')
