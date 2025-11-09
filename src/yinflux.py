@@ -1,9 +1,12 @@
 
+import logging,asyncio,queue,time
+
+from yahub import Msg, TerminateTaskGroup
+
 from influxdb_client import InfluxDBClient, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.client.exceptions import InfluxDBError
 
-import logging,threading,queue,time
 
 
 class Yinflux :
@@ -13,13 +16,14 @@ class Yinflux :
     self.clientInfluxWrite = None
     self.config = config
     self.root = root
-    self.queue = queue.Queue(maxsize=100)
+    self.queue = asyncio.Queue(maxsize=100)
+    self.logger = logging.getLogger()
 
     #self.mapper = mapper = load_config("solis_modbus.yaml");
 
     self.clientInflux = InfluxDBClient(url=config.get(root,'url'),
-                                        token=config.get(root,'token'),
-                                        org=config.get(root,'org'))
+                                       token=config.get(root,'token'),
+                                       org=config.get(root,'org'))
 
     self.blackList = ['solar/system_datetime']
     self.numPoints = 0
@@ -36,52 +40,54 @@ class Yinflux :
     logging.info("influxDB instantiated");
     return self
 
-  def start(self):
-    self.thread = threading.Thread(target=self.run, daemon=True, name=self.root)
-    self.thread.start()
+#  def start(self):
+ #   self.thread = threading.Thread(target=self.run, daemon=True, name=self.root)
+  #  self.thread.start()
 
   def enqueue(self, msg):
     try :
-      self.queue.put(msg, block=False)
-    except queue.Full as ex :
-      logging.error(ex)
+      self.queue.put_nowait(msg)
+    except asyncio.QueueFull as ex :
+      self.logger.warning(ex)   # but just discard and carry on
 
-  def run(self):
+  async def run(self):
+    self.logger.debug('coroutine started')
     while True:
-      msg = self.queue.get()
+      msg = await self.queue.get()
+      logging.debug(f"writing {msg}");
       self.writeFieldSet(msg)
       self.queue.task_done()
+      await asyncio.sleep(0.5)        # limit the message rate to 2 in case there's loooping
+    self.logger.exception(f'coroutine stopping {ex}')
+    raise TerminateTaskGroup();
 
   def writeFieldSet(self, msg):
     if not self.clientInfluxWrite:
       self.__enter__()
-    logging.debug(f"Influx write fieldset");
+    self.logger.debug(f"Influx write fieldset");
 
     # we're just repackaging another version of msg which is probably unnecessary
     point = {   'measurement' : msg.measurement,
-                'fields' :      msg.fieldSet,
+                'fields' :      msg.fields,
                 'tags'   :      msg.tags,
-                'timestamp' :   msg.timestamp
+                'timestamp':    msg.timestamp * 1000 * 1000 * 1000
     };
     try:
-        #self.logger.info(f"Trying write :{topic}, value:{value}, point:{str(point)}");
-        self.clientInfluxWrite.write(self.config.get(self.root,'bucket'), record=point)
-        logging.debug(f"looks OK {str(point)}");
-        self.numPoints = self.numPoints + 1
+      #self.logger.info(f"Trying write :{topic}, value:{value}, point:{str(point)}");
+      self.clientInfluxWrite.write(self.config.get(self.root,'bucket'), record=point)
+      self.logger.debug(f"looks OK {str(point)}");
+      self.numPoints = self.numPoints + 1
 
     except InfluxDBError as e:
-        raise Exception(f"Error {e.response.status}")
+      raise Exception(f"Error {e.response.status}")
 
     except ValueError as er:
-        #self.logger.warning(er);
-        self.logger.info(f"{str(er)} write failed. Point:{str(point)}");
+      #self.logger.warning(er);
+      self.logger.info(f"{str(er)} write failed. Point:{str(point)}");
 
-  def stop(self):
-    self.queue.join() # wait for queue to empty
-    logging.info(f"closing influx");
-    self.clientInfluxWrite.close()      # have to close down influx cleanly to save all data
-    # self.thread.join()     # this isn't quite right
-    time.sleep(1)
+  async def stop(self):
+    logging.info(f"flushing influx write buffer");
+    self.clientInfluxWrite.close()      # have to call close() to save all data
 
   def __exit__(self, *args):
     pass
