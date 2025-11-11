@@ -24,8 +24,7 @@ class Yinflux :
     self.clientInflux = InfluxDBClient(url=config.get(root,'url'),
                                        token=config.get(root,'token'),
                                        org=config.get(root,'org'))
-
-    self.blackList = ['solar/system_datetime']
+    self.bucket = self.config.get(self.root,'bucket')
     self.numPoints = 0
 
   # invoked by with statement !
@@ -37,7 +36,7 @@ class Yinflux :
         #    flush_interval=self.config.get(self.root,'flush_interval')
         #)
     )
-    logging.info("influxDB instantiated");
+    logging.info(f"influxDB instantiated, bucket '{self.bucket}'");
     return self
 
 #  def start(self):
@@ -73,9 +72,8 @@ class Yinflux :
                 'timestamp':    msg.timestamp * 1000 * 1000 * 1000
     };
     try:
-      #self.logger.info(f"Trying write :{topic}, value:{value}, point:{str(point)}");
-      self.clientInfluxWrite.write(self.config.get(self.root,'bucket'), record=point)
-      self.logger.debug(f"looks OK {str(point)}");
+      self.clientInfluxWrite.write(self.bucket, record=point)
+      self.logger.debug(f"written {str(point)}");
       self.numPoints = self.numPoints + 1
 
     except InfluxDBError as e:
