@@ -48,13 +48,22 @@ class Yrun:
           consumer.enqueue(reply)
       self.queue.task_done()
 
+def runCommand(cmd):
+  import os, json
+  args = cmd.strip().split(' ')
+  res = subprocess.run(args, capture_output=True, encoding="UTF-8")
+  return json.loads(res.stdout)
 
 def getIP():
   import socket
-  hostname = socket.gethostname()
-  ip = socket.gethostbyname_ex(hostname)
-  fieldSet = {
-    'hostname' : hostname,
-    'ip' : repr(ip)
-  }
-  return fieldSet
+  ifaceArray = runCommand('ip -f inet -4 -json address')
+  for iface in ifaceArray :
+    # report the IP4 address of the first non-LOOPBACK interface
+    if 'LOOPBACK' not in iface['flags'] :
+      hostname = socket.getfqdn()
+      fieldSet = {
+        'hostname' : hostname,
+        'ifname'   : iface['ifname'],
+        'ip4'      : iface['addr_info'][0]['local']
+      }
+      return fieldSet
