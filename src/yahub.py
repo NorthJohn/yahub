@@ -96,35 +96,35 @@ class Yahub:
       self.yrun = Yrun(self, config, 'yrun')
       self.stask = tg.create_task(self.yrun.run(), name='yrun')
 
-      from ymqtt import Ymqtt
-      ymqtt = Ymqtt(self, config,'cloudMQTT',)
-      self.qtask = tg.create_task(ymqtt.run(), name='cloudMQTTX')
+      from mqtt import Ymqtt
+      mqtt = Ymqtt(self, config,'cloudMQTT',)
+      self.qtask = tg.create_task(mqtt.run(), name='cloudMQTTX')
 
-      self.queueLogHandler.addListener(ymqtt)
+      self.queueLogHandler.addListener(mqtt)
       self.ltask = tg.create_task(self.queueLogHandler.run(), name='AsyncioQueueLogHandler')
 
-      self.consumersOfData.append(ymqtt)
-      self.consumersOfControl.append(ymqtt)
+      self.consumersOfData.append(mqtt)
+      self.consumersOfControl.append(mqtt)
 
 
-      ymqtt.subscribe('request/#')
+      mqtt.subscribe('request/#')
 
       if config.get('cloudInflux','enable', False):
-        from yinflux import Yinflux
-        yinflux = Yinflux(config, 'cloudInflux')
-        self.itask = tg.create_task(yinflux.run(), name='cloudInflux')
-        self.consumersOfData.append(yinflux)
+        from influx import Yinflux
+        influx = Yinflux(config, 'cloudInflux')
+        self.itask = tg.create_task(influx.run(), name='cloudInflux')
+        self.consumersOfData.append(influx)
 
       if config.get('serialModbus','enable', False):
-        from ymodbus import Ymodbus
-        self.ymodbus = Ymodbus(self, config, 'serialModbus')
-        self.mtask = tg.create_task(self.ymodbus.run(), name='serialModbusX')
+        from modbus import Ymodbus
+        self.modbus = Ymodbus(self, config, 'serialModbus')
+        self.mtask = tg.create_task(self.modbus.run(), name='serialModbusX')
 
       if config.get('oneWire', 'enable', False):
-        from yonewire import Yonewire
-        self.yonewire = Yonewire(self, config,'oneWire')
+        from onewire import Yonewire
+        self.onewire = Yonewire(self, config,'oneWire')
         #if false and self.yonewire.enable:
-        self.otask = tg.create_task(self.yonewire.run(), name='oneWire')
+        self.otask = tg.create_task(self.onewire.run(), name='oneWire')
 
       self.logger.info('startup completed')
 
