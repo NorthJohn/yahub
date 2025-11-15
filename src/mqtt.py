@@ -33,13 +33,19 @@ class Ymqtt:
   async def run(self):
     self.logger.debug('coroutine started')
     self.connect()
-    while True :
-      msg = await self.queue.get()
-      self.publish(msg)
-      self.queue.task_done()
-      await asyncio.sleep(0.5)        # limit the message rate to 2 in case there's loooping
-    self.logger.exception(f'coroutine stopping {ex}')
-    raise TerminateTaskGroup();
+    try :
+      while True :
+        msg = await self.queue.get()
+        self.publish(msg)
+        self.queue.task_done()
+        await asyncio.sleep(0.5)        # limit the message rate to 2 in case there's loooping
+    except Exception as ex:
+      self.logger.exception(f'coroutine stopping {ex}')
+      raise TerminateTaskGroup();
+    finally:
+      if self.mqttc.is_connected():
+        self.mqttc.disconnect()       # this will generate a log message
+
 
   def connect(self):
     config = self.config

@@ -27,21 +27,6 @@ class Yinflux :
     self.bucket = self.config.get(self.root,'bucket')
     self.numPoints = 0
 
-  # invoked by with statement !
-  def __enter__(self):
-    self.clientInfluxWrite = self.clientInflux.write_api(
-        write_options=SYNCHRONOUS
-        #write_options=WriteOptions(
-        #    batch_size=self.config.get(self.root,'batch_size'),
-        #    flush_interval=self.config.get(self.root,'flush_interval')
-        #)
-    )
-    logging.info(f"influxDB instantiated, bucket '{self.bucket}'");
-    return self
-
-#  def start(self):
- #   self.thread = threading.Thread(target=self.run, daemon=True, name=self.root)
-  #  self.thread.start()
 
   def enqueue(self, msg):
     try :
@@ -50,20 +35,40 @@ class Yinflux :
       self.logger.warning(ex)   # but just discard and carry on
 
   async def run(self):
-    self.logger.debug('coroutine started')
-    while True:
-      msg = await self.queue.get()
-      logging.debug(f"writing {msg}");
-      self.writeFieldSet(msg)
-      self.queue.task_done()
-      await asyncio.sleep(0.5)        # limit the message rate to 2 in case there's loooping
-    self.logger.exception(f'coroutine stopping {ex}')
-    raise TerminateTaskGroup();
+    try :
+      self.logger.debug('coroutine started')
+
+      with self.clientInflux.write_api(
+        write_options=SYNCHRONOUS
+        #write_options=WriteOptions(
+        #    batch_size=self.config.get(self.root,'batch_size'),
+        #    flush_interval=self.config.get(self.root,'flush_interval')
+        #)
+      ) as self.clientInfluxWrite :
+        logging.info(f"influxDB instantiated, bucket '{self.bucket}'");
+        while True:
+          msg = await self.queue.get()
+          logging.debug(f"writing {msg}");
+          self.writeFieldSet(msg)
+          self.queue.task_done()
+          await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
+
+    except Exception as ex :
+      self.logger.exception(f'coroutine stopping {ex}')
+      raise TerminateTaskGroup();
+    finally:
+      self.clientInfluxWrite.close()      # have to call close() to save all data
+      logging.info(f"write buffer flushed and closed");
+
 
   def writeFieldSet(self, msg):
+    if getattr(msg, 'measurement', False) == False :
+      self.logger.debug(f"Skipping {msg.topic}, no measurement specified");
+
     if not self.clientInfluxWrite:
       self.__enter__()
-    self.logger.debug(f"Influx write fieldset");
+
+    self.logger.debug(f"write fieldset");
 
     # we're just repackaging another version of msg which is probably unnecessary
     point = {   'measurement' : msg.measurement,
@@ -82,11 +87,4 @@ class Yinflux :
     except ValueError as er:
       #self.logger.warning(er);
       self.logger.info(f"{str(er)} write failed. Point:{str(point)}");
-
-  async def stop(self):
-    logging.info(f"flushing influx write buffer");
-    self.clientInfluxWrite.close()      # have to call close() to save all data
-
-  def __exit__(self, *args):
-    pass
 
