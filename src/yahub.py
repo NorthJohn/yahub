@@ -47,7 +47,7 @@ class Yahub:
 
   def __init__(self, args):
 
-    logging.basicConfig(level=args.log.upper(),
+    logging.basicConfig(level=args.loglevel.upper(),
                       format='%(asctime)s %(levelname)-3s %(module)s %(message)s',
                       datefmt='%H:%M:%S')
 
@@ -58,8 +58,6 @@ class Yahub:
     formatter = logging.Formatter('%(asctime)s %(levelname)-3s %(module)s %(message)s', datefmt='%H:%M:%S')
     self.queueLogHandler.setFormatter(formatter)
     logging.getLogger('').addHandler(self.queueLogHandler)
-
-
     self.logger = logging.getLogger('yahub')
 
 
@@ -71,11 +69,9 @@ class Yahub:
 
     self.logger.info(f"shutdown complete")
 
-
   async def ask_exit(self, tg, signame):
     self.logger.info(f"shutdown initiated, {signame} received")
     raise TerminateTaskGroup()
-
 
   async def run(self):
     config = None
@@ -91,14 +87,14 @@ class Yahub:
                                   lambda signame=signame: tg.create_task(self.ask_exit(tg, signame),name='SignalHandler'))
 
       from yrun import getIP
-      self.logger.info(f'IP address {getIP()}')
+      self.logger.info(f'{getIP()}')
 
       self.yrun = Yrun(self, config, 'yrun')
       self.stask = tg.create_task(self.yrun.run(), name='yrun')
 
       from mqtt import Ymqtt
       mqtt = Ymqtt(self, config,'cloudMQTT',)
-      self.qtask = tg.create_task(mqtt.run(), name='cloudMQTTX')
+      self.qtask = tg.create_task(mqtt.run(), name='cloudMQTT')
 
       self.queueLogHandler.addListener(mqtt)
       self.ltask = tg.create_task(self.queueLogHandler.run(), name='AsyncioQueueLogHandler')
@@ -118,13 +114,19 @@ class Yahub:
       if config.get('serialModbus','enable', False):
         from modbus import Ymodbus
         self.modbus = Ymodbus(self, config, 'serialModbus')
-        self.mtask = tg.create_task(self.modbus.run(), name='serialModbusX')
+        self.mtask = tg.create_task(self.modbus.run(), name='serialModbus')
 
       if config.get('oneWire', 'enable', False):
         from onewire import Yonewire
         self.onewire = Yonewire(self, config,'oneWire')
         #if false and self.yonewire.enable:
         self.otask = tg.create_task(self.onewire.run(), name='oneWire')
+
+      if config.get('nasa', 'enable', False):
+        from nasa import YNasa
+        self.nasa = YNasa(self, config,'nasa')
+        #if false and self.yonewire.enable:
+        self.ntask = tg.create_task(self.nasa.run(), name='nasa')
 
       self.logger.info('startup completed')
 
@@ -147,8 +149,8 @@ class Yahub:
           consumer.enqueue(msg)
 
       else:  # broadcast message
-
-        self.logger.debug(f"Broadcasting {msg} to {len(self.consumersOfData)}")
+        listeners = [x.root for x in self.consumersOfData]
+        self.logger.debug(f"broadcasting {msg} to {' '.join(listeners)}")
         for consumer in self.consumersOfData:
           consumer.enqueue(msg)
 
@@ -159,10 +161,7 @@ if __name__ == "__main__":
   usage = "%prog <commands>"
   parser = argparse.ArgumentParser(description='Yahub - Yet Another HUB')
 
-  parser.add_argument('-l','--log', default='INFO', help="Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL), default is %(default)s.")
-
-  parser.add_argument("-H", "--more-help", dest="help",
-  help="display more help text, not written")
+  parser.add_argument('-l','--loglevel', default='INFO', help="Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL), default is %(default)s.")
 
   args = parser.parse_args()
 

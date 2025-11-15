@@ -22,21 +22,25 @@ class Yonewire:
 
 
   async def run(self):
-    self.logger.debug('coroutine started')
-    """
-    Scans for all sensors and reads their temperatures.
-    """
-    self.logger.info(f"one time scan for DS18B20 sensors")
-    # Pattern to find all DS18B20 sensor directories
-    self.sensor_folders = glob.glob(self.base_dir + '28-*')
-    self.logger.info(f"found {len(self.sensor_folders)} DS18B20 sensors.")
+    try :
+      self.logger.debug('coroutine started')
+      """
+      Scans for all sensors and reads their temperatures.
+      """
+      self.logger.info(f"one time scan for DS18B20 sensors")
+      # Pattern to find all DS18B20 sensor directories
+      self.sensor_folders = glob.glob(self.base_dir + '28-*')
+      self.logger.info(f"found {len(self.sensor_folders)} DS18B20 sensors.")
 
-    while True:
-      await self.read_all_sensors()
-      await asyncio.sleep(self.config.get(self.root, 'poll_interval', 20))
+      while True:
+        await self.read_all_sensors()
+        await asyncio.sleep(self.config.get(self.root, 'poll_interval', 20))
+    except Exception as ex:
+      self.logger.exception(f'coroutine stopping {ex}')
+      raise TerminateTaskGroup();
+    finally:
+      pass
 
-    self.logger.exception(f'coroutine stopping {ex}')
-    raise TerminateTaskGroup();
 
   async def read_temp_raw(self, device_folder):
     """
