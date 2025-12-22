@@ -11,7 +11,7 @@ class Config:
     self.keys = {}
     self.flatten(self.map, 0)
 
-  def get(self, key, attribute, default=False):
+  def get(self, key, attribute, default=None):
     if key in self.extendedMap:
       parent = self.extendedMap[key]
       #print(f'parent {parent}')
@@ -20,11 +20,13 @@ class Config:
         return node[attribute]
       if attribute in parent :
         return parent[attribute]
-      if default is False :
+      if default is None :
         raise KeyError(f'{attribute} not defined at or above {key} in configuration map')
       return default
     else:
+      if default is None :
         raise KeyError(f'{key} is not in the configuration map')
+      return default
 
   def getChildren(self, key):
     children = []
