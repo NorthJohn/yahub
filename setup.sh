@@ -14,10 +14,6 @@
 #
 
 
-echo "### update and upgrade ###"
-sudo apt update
-sudo apt upgrade
-
 echo "### install libraries ###"
 sudo apt install python3-pip mosquitto influxdb influxdb-client git
 
