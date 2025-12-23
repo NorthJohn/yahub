@@ -31,7 +31,6 @@ class Yonewire:
       # Pattern to find all DS18B20 sensor directories
       self.sensor_folders = glob.glob(self.base_dir + '28-*')
       self.logger.info(f"found {len(self.sensor_folders)} DS18B20 sensors.")
-
       while True:
         await self.read_all_sensors()
         await asyncio.sleep(self.config.get(self.root, 'poll_interval', 20))
@@ -101,11 +100,11 @@ class Yonewire:
         sensorMap      = self.config.get(self.root, 'sensor-map', {})
         sensorLocation = self.config.get(self.root, 'sensor-location', {})
         # first lookup
-        sensorName = sensorMap[sensor_id] if sensor_id in sensorMap else sensor_id[-4:]
+        sensorName = sensorMap[sensor_id] if sensor_id in sensorMap else sensor_id
 
         msg = Msg(f"onewire/{sensorName}", round(temp_c, 2))
         msg.timestamp = timestamp
-        msg.measurement = 'temperature' ;
+        msg.measurement = self.config.get(self.root,'measurement','temperature') ;
 
         if sensorName in sensorLocation :
           msg.source = sensorName ;
@@ -113,8 +112,15 @@ class Yonewire:
           #
           # set up the influx fields
           #
-          msg.fields = { msg.location : temp_c }
-          msg.tags   = { 'source' : msg.source }
+          self.logger.debug(f'location w optional tag is {msg.location}')
+          if type(msg.location) is list:
+
+            msg.fields = { msg.location[0] : temp_c }
+            msg.tags   = { 'source' : msg.location[1] }
+
+          else:
+            msg.fields = { msg.location : temp_c }
+            msg.tags   = { 'source' : msg.source }
 
         else :
           msg.source = sensorName ;
