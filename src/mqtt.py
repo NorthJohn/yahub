@@ -50,8 +50,8 @@ class Ymqtt:
   def connect(self):
     config = self.config
     root = self.root
-
-    self.mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, clean_session=True, client_id='yahub-1')
+    clientID = config.get(root,'clientID','yahub-1') 
+    self.mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, clean_session=True, client_id=clientID)
     self.mqttc.username_pw_set(config.get(root,'username'), config.get(root,'password'))
 
     if config.get(root,'use_ssl', False):
