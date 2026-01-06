@@ -64,6 +64,7 @@ class Yinflux :
   def writeFieldSet(self, msg):
     if getattr(msg, 'measurement', False) == False :
       self.logger.debug(f"Skipping {msg.topic}, no measurement specified");
+      return
 
     if not self.clientInfluxWrite:
       self.__enter__()
