@@ -59,6 +59,7 @@ class Yahub:
     self.queueLogHandler.setFormatter(formatter)
     logging.getLogger('').addHandler(self.queueLogHandler)
     self.logger = logging.getLogger('yahub')
+    self.configFile = args.config
 
 
   def start(self):
@@ -75,9 +76,8 @@ class Yahub:
 
   async def run(self):
     config = None
-    configFile = 'yahub.yaml'
-    self.logger.info(f'{NAME} version {VERSION}, loading config from {configFile}')
-    with open(configFile) as yfile:
+    self.logger.info(f'{NAME} version {VERSION}, loading config from {self.configFile}')
+    with open(self.configFile) as yfile:
       config = Config(yaml.safe_load(yfile))
 
     async with asyncio.TaskGroup() as tg:
@@ -162,6 +162,8 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description='Yahub - Yet Another HUB')
 
   parser.add_argument('-l','--loglevel', default='INFO', help="Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL), default is %(default)s.")
+
+  parser.add_argument('-c','--config', default='yahub.yaml', help="Use configuration file %(default)s.")
 
   args = parser.parse_args()
 
