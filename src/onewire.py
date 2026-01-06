@@ -99,8 +99,19 @@ class Yonewire:
 
         sensorMap      = self.config.get(self.root, 'sensor-map', {})
         sensorLocation = self.config.get(self.root, 'sensor-location', {})
+        sensorName = None ;
+        sensorOffset = 0 ;
         # first lookup
-        sensorName = sensorMap[sensor_id] if sensor_id in sensorMap else sensor_id
+        device = sensorMap[sensor_id] if sensor_id in sensorMap else sensor_id
+
+        if type(device) is list:
+          sensorName = device[0]
+          sensorOffset = device[1]
+          temp_c += device[1]
+        else:
+          sensorName = device
+
+        self.logger.debug(f"Sensor ID: {sensor_id}, name: {sensorName}, offset: {sensorOffset}")
 
         msg = Msg(f"onewire/{sensorName}", round(temp_c, 2))
         msg.timestamp = timestamp
