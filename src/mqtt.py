@@ -1,6 +1,6 @@
 
 
-import logging,asyncio,queue,time
+import logging,asyncio,queue,time,random
 
 import paho.mqtt.client as mqtt
 
@@ -50,7 +50,7 @@ class Ymqtt:
   def connect(self):
     config = self.config
     root = self.root
-    clientID = config.get(root,'clientID','yahub-1') 
+    clientID = config.get(root,'clientID', f'cli-{random.randint(1000,9999)}')
     self.mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, clean_session=True, client_id=clientID)
     self.mqttc.username_pw_set(config.get(root,'username'), config.get(root,'password'))
 
