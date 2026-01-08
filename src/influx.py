@@ -1,5 +1,6 @@
 
 import logging,asyncio,queue,time
+import urllib3
 
 from yahub import Msg, TerminateTaskGroup
 
@@ -49,7 +50,7 @@ class Yinflux :
         while True:
           msg = await self.queue.get()
           logging.debug(f"writing {msg}");
-          self.writeFieldSet(msg)
+          await self.writeFieldSet(msg)
           self.queue.task_done()
           await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
 
@@ -61,7 +62,7 @@ class Yinflux :
       logging.info(f"write buffer flushed and closed");
 
 
-  def writeFieldSet(self, msg):
+  async def writeFieldSet(self, msg):
     if getattr(msg, 'measurement', False) == False :
       self.logger.debug(f"Skipping {msg.topic}, no measurement specified");
       return
@@ -85,7 +86,8 @@ class Yinflux :
     except InfluxDBError as e:
       raise Exception(f"Error {e.response.status}")
 
-    except ValueError as er:
+    except (ValueError, urllib3.exceptions.ReadTimeoutError) as er:
       #self.logger.warning(er);
       self.logger.info(f"{str(er)} write failed. Point:{str(point)}");
-
+      await asyncio.sleep(5 * 60)
+	
