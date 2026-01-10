@@ -3,11 +3,13 @@ import time
 import sys
 import asyncio
 import logging
+import datetime
+
 from yahub import Msg
 
 # --- PROTOCOL CONSTANTS ---
 FRAME_LENGTH = 13 # Start(1) + Src(1) + Dst(1) + Cmd(1) + Data(8) + Chksum(1)
-START_BYTE = 0x32
+START_BYTE = b'0x32'
 
 # --- DECODING MAPS (Based on reverse engineering community efforts, highly simplified) ---
 COMMAND_A0_DECODER = {
@@ -26,6 +28,10 @@ def decode_temperature(byte_value : int):
   except TypeError:
     return "N/A"
 
+addressClass = { 'Outdoor' : 0x10, 'HTU' : 0x11, 'Indoor' : 0x20, 'ERV' : 0x30, 'Diffuser' : 0x35, \
+  'MCU' : 0x38, 'RMC' : 0x40, 'WiredRemote' : 0x50, 'PIM' : 0x58, 'SIM' : 0x59, 'Peak' : 0x5A, 'PowerDivider' : 0x5B }
+
+dataTypes = { 'Undefined' : 0, 'Read' : 1, 'Write' : 2, 'Request' : 3, 'Notification' : 4, 'Response' : 5, 'Ack' : 6, 'Nack' : 7 }
 
 class Nasa_frame:
 
@@ -34,8 +40,6 @@ class Nasa_frame:
     """
     Calculates a simple 8-bit checksum for the frame data (Sum bytes 1 through 11).
     """
-    if len(frame_bytes) < FRAME_LENGTH:
-        return 0
     # Sum bytes 1 through 11 (Source, Destination, Command, Data 1-8)
     checksum_sum = sum(frame_bytes[1:12])
     # Use the lower 8 bits of the sum.
@@ -54,17 +58,34 @@ class Nasa_frame:
   @staticmethod
   def decode(full_frame : bytearray):
 
-    if len(full_frame) != FRAME_LENGTH:
-      raise Exception(f"invalid frame length: {len(full_frame)}")
-    if full_frame[0] != START_BYTE:
+#   if len(full_frame) != FRAME_LENGTH:
+#     raise Exception(f"invalid frame length: {len(full_frame)}")
+
+    if full_frame[0] != b'2'[0]:
       raise Exception("invalid start byte")
 
     frame = Nasa_frame()
     frame.bites = full_frame
-    frame.src = full_frame[1]
-    frame.dst = full_frame[2]
-    frame.cmd = full_frame[3]
-    frame.checksum = full_frame[12]
+    frame.size = int.from_bytes(full_frame[1:3])
+
+    frame.srcClass = full_frame[3]
+    frame.srcChannel = full_frame[4]
+    frame.srcAddress = full_frame[5]
+
+    frame.dstClass = full_frame[6]
+    frame.dstChannel = full_frame[7]
+    frame.dstAddress = full_frame[8]
+
+    frame.dataType = full_frame[10]
+    frame.packetNumber = full_frame[11]
+    frame.capacity = full_frame[12]
+
+    frame.messageNumber = int.from_bytes(full_frame[13:14])
+
+    crcLoc = len(full_frame) - 2
+    frame.CRC16 = int.from_bytes(full_frame[crcLoc:crcLoc+2])
+
+    return frame, 'Success'
 
     calculated_checksum = frame.calculate_checksum(full_frame)
 
@@ -94,6 +115,28 @@ class Nasa_frame:
 
     return frame, "Success"
 
+  @staticmethod
+  def addrToString(clas,channel,address):
+    amap = dict((v,k) for k,v in addressClass.items())
+    clasName = amap[clas] if clas in amap else clas
+    return (f'{clasName}.{channel}.{address}')
+
+  @staticmethod
+  def toString(frame):
+    return (f'size:{frame.size} {Nasa_frame.addrToString(frame.srcClass,frame.srcChannel,frame.srcAddress)} to {Nasa_frame.addrToString(frame.dstClass,frame.dstChannel,frame.dstAddress)} tipe:{Nasa_frame.dataTypeToString(frame.dataType)} packetNum:{frame.packetNumber} capacity:{frame.capacity} messageNum:{frame.messageNumber}')
+
+  @staticmethod
+  def dataTypeToString(dt):
+    amap = dict((v,k) for k,v in dataTypes.items())
+    return amap[dt] if dt in amap else dt
+
+def getHex(ba) :
+  h = ' '.join(format(bite, '02x') for bite in ba) if ba else ''
+  return (f'len:{len(ba) if ba else 0} .. {h}')
+
+
+def printHex(ba) :
+  print(getHex(ba))
 
 class YNasa:
   """
@@ -108,70 +151,95 @@ class YNasa:
     self.yahub = yahub
     self.logger = logging.getLogger()
     self.ser = None
+    self.frame_buffer = bytearray()
 
   def read_frame_blocking(self):
     if self.ser is None:
       raise Exception(f'Serial port not open')
     try :
-
-      frame_buffer = bytearray()
       # Read all available data byte at a time, or block  if nothing is available immediately
+      inPacket = False
       while True :
-        bites = self.ser.read(self.ser.in_waiting or 1)
-        if not bites:
-          # Shouldn't be called Sleep to yield to the event loop if the last serial read was fast/empty
-          time.sleep(10)
-          if len(frame_buffer):
-              self.logger.warn(f'read timeout. Discarding {frame_buffer.hex(" ")}')
-              del frame_buffer[:]
-          continue
-        frame_buffer.extend(bites)
+        avail = self.ser.in_waiting
+
+        ## fix, don't seem to be able to handle larger buffers
+        bites = self.ser.read( min(64, max(1,avail)))  # 1 to 512 bytes at a time
+        self.frame_buffer += bites
+        #self.logger.debug(f'Received {getHex(self.frame_buffer)}')
 
         # work through all available bytes until we have a frame
-        while True :
-          start_index = frame_buffer.find(START_BYTE)
+        if not inPacket :
+          start_bite = b'2'
+          start_index = self.frame_buffer.find(start_bite)
+
           if start_index < 0 :
-            break   # no start byte, read more bytes
+            continue    # no start byte, read more bytes
+          self.logger.debug(f'got start index {start_index}')
 
           # Discard unexpected junk bytes before the start byte
           if start_index > 0:
             # Optionally log discarded junk:
-            self.logger.warn(f'Discarding {frame_buffer[:start_index].hex(" ")}')
-            del frame_buffer[:start_index]
+            self.logger.debug(f'Discarding preamble {getHex(self.frame_buffer[:start_index])}')
+            del self.frame_buffer[:start_index]
+          inPacket = True
 
-                  # Have we got a full frame
-          if len(frame_buffer) < FRAME_LENGTH:
-            # Not enough bytes for a full frame, wait for more data
-            break  # read more bytes
+        else:
+          self.logger.debug(f'frame so far {getHex(self.frame_buffer)}')
+          if len(self.frame_buffer) < 3 :
+            continue
 
-                  # slice full frame out of buffer
-          full_frame = frame_buffer[:FRAME_LENGTH]
-          # remove used bytes from buffer
-          del frame_buffer[:FRAME_LENGTH]
+          packLen = int.from_bytes(self.frame_buffer[1:3])
+          if packLen > 500 :
+            self.logger.warn(f'packet len needed is too large, discarding buffer {packLen}')
+            del self.frame_buffer[:]
+            inPacket = False
+            continue
+
+          self.logger.debug(f'packet len needed {packLen}')
+
+          #breakpoint()
+          if len(self.frame_buffer) < packLen :
+            continue
+
+          full_frame = self.frame_buffer[:(packLen-4)]
+          #self.logger.info(f'frame finally {getHex(full_frame)}')
+          del self.frame_buffer[:(packLen-4)]
+          #inPacket = False
           return full_frame
-    except:
+
+
+
+    except Exception as e:
       # catch exceptions that would otherwise not be caught in coroutine
       self.logger.exception(e)
+      return None
+
+
+	
 
 
   async def run(self):
     self.logger.info('Samsung NASA Protocol RS-485 coroutine started')
     with serial.Serial(
         port=self.config.get(    self.root, 'device', '/dev/ttyUSB0'),
-        baudrate=self.config.get(self.root, 'baudrate', 2400),
-        parity=self.config.get(  self.root, 'parity',   serial.PARITY_EVEN),
+        baudrate=self.config.get(self.root, 'baudrate', 9600),
+        parity=self.config.get(  self.root, 'parity',   serial.PARITY_NONE),
         stopbits=self.config.get(self.root, 'stopbits', serial.STOPBITS_ONE),
         bytesize=self.config.get(self.root, 'bytesize', serial.EIGHTBITS),
-        timeout=self.config.get (self.root, 'timeout',  60)
+        timeout=self.config.get (self.root, 'timeout',  1)
       ) as self.ser :
-
+      self.ser.reset_input_buffer()
       self.logger.info(f"{repr(self.ser)}")
 
       """ read and queue nasa frames forever """
       while True :
         try:
           full_frame =  await asyncio.to_thread(self.read_frame_blocking)
+          self.logger.info(f"frame {getHex(full_frame)}")
           frame, status = Nasa_frame.decode(full_frame)
+
+          print(Nasa_frame.toString(frame))
+          continue;
 
           if status != "Success" :
             self.logger.warn(status)
@@ -179,7 +247,7 @@ class YNasa:
             payload = frame.bites.hex()
             msg = Msg(f"nasa/dataframe", payload)
             msg.frame = frame
-            msg.timestamp = timestamp
+            msg.timestamp = datetime.datetime.now()
             # measurement not specified, mesage won't be written to influx
             # put the successfully decoded frame into the asyncio Queue
             await self.queue.put(msg)
