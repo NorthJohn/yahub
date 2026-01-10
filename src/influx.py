@@ -27,6 +27,7 @@ class Yinflux :
                                        org=config.get(root,'org'))
     self.bucket = self.config.get(self.root,'bucket')
     self.numPoints = 0
+    self.numErrors = 0
 
 
   def enqueue(self, msg):
@@ -36,30 +37,34 @@ class Yinflux :
       self.logger.warning(ex)   # but just discard and carry on
 
   async def run(self):
-    try :
-      self.logger.debug('coroutine started')
+    self.logger.debug('coroutine started')
+    while True:    # the restart loop
+      try :
+        with self.clientInflux.write_api(
+          write_options=SYNCHRONOUS
+          #write_options=WriteOptions(
+          #    batch_size=self.config.get(self.root,'batch_size'),
+          #    flush_interval=self.config.get(self.root,'flush_interval')
+          #)
+        ) as self.clientInfluxWrite :
+          logging.info(f"influxDB instantiated, bucket '{self.bucket}'");
+          while True:   # the message loop
+            msg = await self.queue.get()
+            logging.debug(f"writing {msg}");
+            await self.writeFieldSet(msg)
+            self.queue.task_done()
+            await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
+      except Exception as ex :
+        self.numErrors += 1
+        self.logger.exception(f'error count:{self.numErrors} {ex}')
+        if self.numErrors > 10 :
+          raise TerminateTaskGroup();
+        else :
+          await asyncio.sleep(5 * 60)         # sleep for a while then close & reopen client
 
-      with self.clientInflux.write_api(
-        write_options=SYNCHRONOUS
-        #write_options=WriteOptions(
-        #    batch_size=self.config.get(self.root,'batch_size'),
-        #    flush_interval=self.config.get(self.root,'flush_interval')
-        #)
-      ) as self.clientInfluxWrite :
-        logging.info(f"influxDB instantiated, bucket '{self.bucket}'");
-        while True:
-          msg = await self.queue.get()
-          logging.debug(f"writing {msg}");
-          await self.writeFieldSet(msg)
-          self.queue.task_done()
-          await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
-
-    except Exception as ex :
-      self.logger.exception(f'coroutine stopping {ex}')
-      raise TerminateTaskGroup();
-    finally:
-      self.clientInfluxWrite.close()      # have to call close() to save all data
-      logging.info(f"write buffer flushed and closed");
+      finally:
+        self.clientInfluxWrite.close()      # have to call close() to save all data
+        logging.info(f"write buffer flushed and closed");
 
 
   async def writeFieldSet(self, msg):
@@ -83,11 +88,13 @@ class Yinflux :
       self.logger.debug(f"written {str(point)}");
       self.numPoints = self.numPoints + 1
 
-    except InfluxDBError as e:
-      raise Exception(f"Error {e.response.status}")
-
-    except (ValueError, urllib3.exceptions.ReadTimeoutError) as er:
+    except (InfluxDBError, ValueError, TimeoutError) as er:
       #self.logger.warning(er);
-      self.logger.info(f"{str(er)} write failed. Point:{str(point)}");
-      await asyncio.sleep(5 * 60)
+      self.logger.warning(f"{str(er)} write failed. Point:{str(point)}");
+      self.numErrors += 1
+      self.logger.exception(f'error count:{self.numErrors} {ex}')
+      if self.numErrors > 10 :
+        raise TerminateTaskGroup();
+      else :
+        await asyncio.sleep(1 * 60)
 	
