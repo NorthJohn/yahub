@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 from yahub import Msg, Yahub, TerminateTaskGroup
+from downsampler import Downsampler
 
 class Yonewire:
 
@@ -16,9 +17,12 @@ class Yonewire:
     self.root = root
     self.yahub = yahub
     self.logger = logging.getLogger()
+    self.downsampler = Downsampler()
+
 
     # Base directory for 1-Wire devices
     self.base_dir = '/sys/bus/w1/devices/'
+
 
 
   async def run(self):
@@ -116,6 +120,8 @@ class Yonewire:
         msg = Msg(f"onewire/{sensorName}", round(temp_c, 2))
         msg.timestamp = timestamp
         msg.measurement = self.config.get(self.root,'measurement','temperature') ;
+        msg.reportOnDiff = 0.5
+        msg.maxPeriodSecs = 10 * 60
 
         if sensorName in sensorLocation :
           msg.source = sensorName ;
@@ -141,8 +147,11 @@ class Yonewire:
           msg.fields = { msg.source : temp_c }
           msg.tags   = { }
 
-        self.logger.debug(f'queued: {msg}')
-        msgs.append(msg)
+
+        dmsg = self.downsampler.digest(msg)
+        if dmsg:
+          self.logger.debug(f'queued: {dmsg}')
+          msgs.append(dmsg)
 
       else:
         self.logger.warning(f"Sensor ID: {sensor_id} | Error reading temperature.")
