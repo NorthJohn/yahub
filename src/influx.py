@@ -85,7 +85,7 @@ class Yinflux :
     };
     try:
       self.clientInfluxWrite.write(self.bucket, record=point)
-      self.logger.debug(f"written {str(point)}");
+      self.logger.info(f"written {str(point)}");
       self.numPoints = self.numPoints + 1
 
     except (InfluxDBError, ValueError, TimeoutError) as er:
