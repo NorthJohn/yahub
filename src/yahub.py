@@ -20,9 +20,9 @@ class Msg() :
   payload = None
   def __init__(self,t, p):
     self.topic = t
-    self.payload = str(p)
+    self.payload = p
   def __repr__(self):
-    return f'{self.topic} : {self.payload}'
+    return f'{self.topic} : {str(self.payload)}'
 
 
 def prepareDataForInflux(msg):
