@@ -2,6 +2,7 @@
 import time, math, logging
 
 class TopicContext:
+  timestamp = 0
   payload = 0.0    # last payload
   mean = 0.0
   lastMean = 0.0
@@ -9,7 +10,7 @@ class TopicContext:
   numSamples = 0
   begin = True
   def __repr__(self):
-    return f"payload:{self.payload} mean:{self.mean} reportedMean:{self.reportedMean} numSamples:{self.numSamples} begin:{self.begin}"
+    return f"{self.timestamp} payload:{self.payload} mean:{self.mean} reportedMean:{self.reportedMean} numSamples:{self.numSamples} begin:{self.begin}"
 
 
 toFix = lambda x, y : x
@@ -36,7 +37,6 @@ class Downsampler:
     #percentageDiff = (msg.payload - store.reportedMean) * 100 * 2 / (msg.payload + store.lastMean) if store.numSamples else 0.0;
 
     valueDiff1 = abs(msg.payload - store.reportedMean) if store.numSamples else 0.0;
-    #breakpoint()
     valueDiff2 = abs(msg.payload - store.payload)
     valueTrigger = max(valueDiff1, valueDiff2) > getattr(msg, 'reportOnDiff', 0) ;
 
@@ -44,13 +44,11 @@ class Downsampler:
 
     timeDiff = 0; timeDiffLog = '' ; timeTrigger = False ;
     if hasattr(msg, 'maxPeriodSecs'):
-      if not hasattr(store, 'timestamp'):
-        store.timestamp = dateNow
       if not hasattr(msg, 'timestamp'):
         msg.timestamp = dateNow;
       timeDiff = msg.timestamp - store.timestamp ;
-      timeDiffLog = f'Δt:{round(timeDiff / 1000) }'
-      timeTrigger = timeDiff > (msg.maxPeriodSecs * 1000);
+      timeDiffLog = f'Δt:{round(timeDiff) }'
+      timeTrigger = timeDiff > (msg.maxPeriodSecs);
 
     # check if window size has been reached
 
@@ -70,7 +68,8 @@ class Downsampler:
     #print(f'3 {store}')
     #breakpoint()
 
-    #const statusText = `${msg.topic} ${msg.payload} mean:${storeMeanView} num:${store.numSamples} ${timeDiffLog}`
+    statusText = f'{msg.topic} {msg.payload} mean:{storeMeanView} num:{store.numSamples} {timeDiffLog}'
+    self.logger.debug(statusText)
 
     #node.log(`${msg.topic} ${msg.lastPayload} mean: ${store.mean.toFixed(2)}, `
     #        + `diff% ${percentageDiff}% diff:${valueDiff} numSamples:${msg.numSamples} `
