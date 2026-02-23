@@ -57,10 +57,10 @@ class Yinflux :
       except Exception as ex :
         self.numErrors += 1
         self.logger.exception(f'error count:{self.numErrors} {ex}')
-        if self.numErrors > 10 :
+        if self.numErrors > 100 :
           raise TerminateTaskGroup();
         else :
-          await asyncio.sleep(5 * 60)         # sleep for a while then close & reopen client
+          await asyncio.sleep(30 * 60)         # sleep for a while then close & reopen client
 
       finally:
         self.clientInfluxWrite.close()      # have to call close() to save all data
@@ -85,7 +85,7 @@ class Yinflux :
     };
     try:
       self.clientInfluxWrite.write(self.bucket, record=point)
-      self.logger.info(f"written {str(point)}");
+      self.logger.debug(f"written {str(point)}");
       self.numPoints = self.numPoints + 1
 
     except (InfluxDBError, ValueError, TimeoutError) as er:
