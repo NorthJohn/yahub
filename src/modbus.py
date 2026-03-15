@@ -42,7 +42,7 @@ class Ymodbus:
         # retries=3,
         baudrate=9600,
         bytesize=8,
-        parity="N",
+        # parity='N',
         stopbits=1
     )
 
@@ -65,12 +65,27 @@ class Ymodbus:
   def loadRegisterDefinitions(self):
     #rows = None
     mapName = self.config.get(self.root, 'map')
+    self.modbusRegAll = {}
     with open(mapName, newline='') as csvfile:
       reader = csv.DictReader(csvfile)
-      self.modbusMap = [row for row in reader]
-    self.logger.info(f"Modbus register map loaded {mapName}")
+      for row in reader :  
+        try :
+      	  self.modbusRegAll[row['name']] = int(row['register'])
+        except Exception as e :
+          pass 
 
-  # rows = [(row) =>  for row in rows]
+    registers = self.config.get(self.root, 'registers')
+    self.modbusReg = {}
+    for rname in registers :  # copy across known registers
+      if rname in self.modbusRegAll:
+        self.modbusReg[rname] = self.modbusRegAll[rname]
+      else:
+        self.logger.debug(f'{r} not mapped to numeric value')
+
+
+    self.logger.info(f"{len(self.modbusReg)} out of {len(self.modbusRegAll)} registers selected from {mapName}")
+    print(self.modbusReg)
+    # rows = [(row) =>  for row in rows]
 
 #  for row in rows:
 #    m = re.search("\.[\d]+$",f"{row['Default value']}")
@@ -79,19 +94,11 @@ class Ymodbus:
 
   async def connect(self):
     await self.mclient.connect()
+    self.logger.debug(f"connected")
 
-  def poll3JUNK(self):
-    rr = self.mclient.read_holding_registers(4, count=12, slave=1)
-    if rr.isError():
-      self.logger.warning(f"Received exception from device ({rr})")
-    assert rr.registers[0] == 17
-    assert rr.registers[1] == 17
-
-    return rr
 
   async def poll(self):
     slaves = self.config.get(self.root, 'slaves')
-    registers = self.config.get(self.root, 'registers')
     timestamp = (math.floor(time.time()/60)) * 60  # round to nearest minute
     #self.logger.debug(f"slaves {slaves}")
     for slave in slaves :
@@ -100,41 +107,47 @@ class Ymodbus:
         msgs = []
         firstTopic = None
         lastTopic = None
-        try :
-          for r in registers:
-            rr = await self.mclient.read_holding_registers(2, count=12, slave=slave['address'])
-            if rr.isError():
-              self.logger.warning(f"Received exception from device ({rr})")
-              break
+        for r in self.modbusReg :
+          try :
             source = f"slave{r}"
             topic = f"{r}"
             if not firstTopic:
               firstTopic = topic
             lastTopic = topic
-            msg = Msg(f"{source}/{topic}", rr.registers[0])
-            msg.timestamp = timestamp
-            msg.topic = topic   # lookup caxton influx handler !!!!!
-            msg.source = source
-    #       self.logger.debug(f"Created msg {msg}")
-            msgs.append(msg)
 
-        except ModbusIOException as me :
-          self.logger.warning(me.message)
+            raddress = self.modbusReg[r]
+            if self.mclient.connected :
+              rr = await self.mclient.read_holding_registers(raddress, count=2, device_id=slave['address'])
+              if rr.isError():
+                self.logger.warning(f"{slave['name']}.{raddress}: {rr}")
+                break
+              msg = Msg(f"{source}/{topic}", rr.registers[0])
+              msg.timestamp = timestamp
+              msg.topic = topic   # lookup caxton influx handler !!!!!
+              msg.source = source
+      #       self.logger.debug(f"Created msg {msg}")
+              msgs.append(msg)
+            else :
+              self.logger.warning(f"socket is closed")
 
-          # timeouts and task shutdowns throw the SAME exception
-          # so have to test the string to determine action
 
-          if 'No response received' in me.message :
-            await asyncio.sleep(60)
-          else:
-            raise(me)
+          except ModbusIOException as me :
+            self.logger.warning(f"{slave['name']}.{raddress}: {me.message}")
 
-        except ModbusException as me :
-          self.logger.exception(f"Received exception from device ({me})")
+            # timeouts and task shutdowns throw the SAME exception
+            # so have to test the string to determine action
+
+            if 'No response received' in me.message :
+              await asyncio.sleep(60)
+            else:
+              raise(me)
+
+          except ModbusException as me :
+            self.logger.exception(f"{slave['name']}.{raddress}: {me})")
 
         self.yahub.route(msgs)
-        self.logger.info(f"{slave['name']}: {len(msgs)} modbus registers read: {firstTopic} → {lastTopic}")
+        self.logger.info(f"{len(msgs)} modbus registers read from {slave['name']} {firstTopic} → {lastTopic}")
 
-      except ConnectionException as me :
-        self.logger.warning(str(me))
+      except ConnectionException as ce :
+        self.logger.warning(f"{slave['name']}: {ce.message}")
         await asyncio.sleep(30)
