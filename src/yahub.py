@@ -93,8 +93,8 @@ class Yahub:
       self.stask = tg.create_task(self.yrun.run(), name='yrun')
 
       from mqtt import Ymqtt
-      mqtt = Ymqtt(self, config,'cloudMQTT',)
-      self.qtask = tg.create_task(mqtt.run(), name='cloudMQTT')
+      mqtt = Ymqtt(self, config,'mqttCloud',)
+      self.qtask = tg.create_task(mqtt.run(), name='mqttCloud')
 
       self.queueLogHandler.addListener(mqtt)
       self.ltask = tg.create_task(self.queueLogHandler.run(), name='AsyncioQueueLogHandler')
@@ -105,10 +105,10 @@ class Yahub:
 
       mqtt.subscribe('request/#')
 
-      if config.get('cloudInflux','enable', False):
+      if config.get('influxCloud','enable', False):
         from influx import Yinflux
-        influx = Yinflux(config, 'cloudInflux')
-        self.itask = tg.create_task(influx.run(), name='cloudInflux')
+        influx = Yinflux(config, 'influxCloud')
+        self.itask = tg.create_task(influx.run(), name='influxCloud')
         self.consumersOfData.append(influx)
 
       if config.get('serialModbus','enable', False):
