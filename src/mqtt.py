@@ -1,6 +1,6 @@
 
 
-import logging,asyncio,queue,time,random
+import logging,asyncio,queue,time,random,json
 
 import paho.mqtt.client as mqtt
 
@@ -99,7 +99,8 @@ class Ymqtt:
 
   def publish(self, msg):
     if self.mqttc and self.mqttc.is_connected():
-      msg_info = self.mqttc.publish(msg.topic, msg.payload, qos=1)
+      payload = json.dumps(msg.payload)  if type(msg.payload) is dict else msg.payload
+      msg_info = self.mqttc.publish(msg.topic, payload, qos=1)
       self.unacked_publish.add(msg_info.mid)
       msg_info.wait_for_publish()
 
