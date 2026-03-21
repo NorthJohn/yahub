@@ -105,6 +105,12 @@ class Yahub:
 
       mqtt.subscribe('request/#')
 
+      if config.get('influxLocal','enable', False):
+        from influx import Yinflux
+        influx = Yinflux(config, 'influxLocal')
+        self.itask = tg.create_task(influx.run(), name='influxLocal')
+        self.consumersOfData.append(influx)
+
       if config.get('influxCloud','enable', False):
         from influx import Yinflux
         influx = Yinflux(config, 'influxCloud')
