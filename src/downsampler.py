@@ -1,5 +1,5 @@
 
-import time, math, logging
+import time, math, logging, copy
 
 class TopicContext:
   timestamp = 0
@@ -21,11 +21,35 @@ class Downsampler:
     self.storeMap = {}
     self.logger = logging.getLogger()
 
+
   def digest(self, msg):
+    # special case, no processing
+    if getattr(msg,'passThrough', False):
+      return msg  
+    
+    # it's not a JSON payload
+    if type(msg.payload) is not dict:
+      return self.digestScalar(msg) 
+    
+    # unpack messages with JSON payloads into a stream of 
+    # individual messages with simple payloads
+    m3 = copy.copy(msg)
+    m3.payload = {}
+    for k,v in msg.payload.items(): 
+      m1 = copy.copy(msg)
+      m1.topic = f"{msg.topic}/{k}"
+      m1.payload = v
+      m2 = self.digestScalar(m1)
+      if m2 :
+        m3.payload[k] = m2.payload
+
+    return m3 if len(m3.payload) else None
+
+  def digestScalar(self, msg):  
+
     topic = msg.topic
 
     # conditions to reset the store
-    #print(self.storeMap)
     store = self.storeMap[topic] if topic in self.storeMap else TopicContext()
     if getattr(msg, 'reset', False):
       store = TopicContext()
@@ -97,16 +121,28 @@ class Downsampler:
 
 from yahub import Msg
 
+#   Test program
+
 if __name__ == "__main__":
+
 
   d = Downsampler()
   mean = 0.0
   for value in range(0,20):
     msg = Msg('abc', value)
-    msg.payload = value
     mean += value
-    #msg.reportOnDiff = 2.5
+    msg.reportOnDiff = 2.5
     res =  d.digest(msg)
 
     print(f"{value} {res.payload if res else ''}")
+
+  mean = 0.0
+  for value in range(0,20):
+    msg = Msg('abc', { 'a' : value,  'b' : value * 2  })
+    mean += value
+    msg.reportOnDiff = 3.5
+    #msg.passThrough = True
+    res =  d.digest(msg)
+
+    print(f"{value} {res.payload if res else ''}")    
 
