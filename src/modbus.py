@@ -46,10 +46,6 @@ class Ymodbus:
         stopbits=1
     )
 
-#  def start(self):
-#    self.thread = asyncio.run(self.run)
-#    #self.thread.start()
-
   async def run(self):
     try:
       self.logger.debug('coroutine started')
@@ -60,31 +56,37 @@ class Ymodbus:
         await asyncio.sleep(self.config.get(self.root, 'poll_interval', 60))
     except Exception as ex:
       self.logger.exception(f'coroutine stopping {ex}')
+    finally:
+      pass
+      #await self.disconnect()
 
 
   def loadRegisterDefinitions(self):
-    #rows = None
     mapName = self.config.get(self.root, 'map')
     self.modbusRegAll = {}
     with open(mapName, newline='') as csvfile:
       reader = csv.DictReader(csvfile)
-      for row in reader :  
+      for row in reader :
         try :
-      	  self.modbusRegAll[row['name']] = int(row['register'])
+          self.modbusRegAll[row['name']] = int(row['register'])
         except Exception as e :
-          pass 
-
-    registers = self.config.get(self.root, 'registers')
-    self.modbusReg = {}
-    for rname in registers :  # copy across known registers
-      if rname in self.modbusRegAll:
-        self.modbusReg[rname] = self.modbusRegAll[rname]
+          pass
+    registerRanges = self.config.get(self.root, 'registers')
+    self.ranges = []
+    numRegisters = 0
+    for rrange in registerRanges :        # copy across known registers
+      nameFirst = rrange[0]
+      nameLast = rrange[1]
+      if nameFirst in self.modbusRegAll and nameLast in self.modbusRegAll:
+        first = self.modbusRegAll[nameFirst]
+        last = self.modbusRegAll[nameLast]
+        numRegisters += last - first + 1
+        self.ranges.append([nameFirst, nameLast])
       else:
-        self.logger.debug(f'{r} not mapped to numeric value')
+        self.logger.debug(f'{rrange} not mapped to numeric value')
 
+    self.logger.info(f"Scanning {numRegisters} registers in {len(self.ranges)} ranges selected from {mapName}")
 
-    self.logger.info(f"{len(self.modbusReg)} out of {len(self.modbusRegAll)} registers selected from {mapName}")
-    print(self.modbusReg)
     # rows = [(row) =>  for row in rows]
 
 #  for row in rows:
@@ -97,42 +99,63 @@ class Ymodbus:
     self.logger.debug(f"connected")
 
 
+  async def disconnect(self):
+    if self.mclient.connected:
+      await self.mclient.close()
+    self.logger.debug(f"disconnected")
+
   async def poll(self):
     slaves = self.config.get(self.root, 'slaves')
-    timestamp = (math.floor(time.time()/60)) * 60  # round to nearest minute
-    #self.logger.debug(f"slaves {slaves}")
+    timestamp = (math.floor(time.time()/6)) * 6  # round to nearest 10 seconds
     for slave in slaves :
       try :
         self.logger.debug(f"slave {slave}")
-        msgs = []
-        firstTopic = None
-        lastTopic = None
-        for r in self.modbusReg :
-          try :
-            source = f"slave{r}"
-            topic = f"{r}"
-            if not firstTopic:
-              firstTopic = topic
-            lastTopic = topic
 
-            raddress = self.modbusReg[r]
+        for rrange in self.ranges :
+          try :
+            source = f"{slave['name']}"
+            topic = f"{rrange[0]}"
+            nameFirst = rrange[0]
+            nameLast = rrange[1]
+            first = self.modbusRegAll[nameFirst]
+            last = self.modbusRegAll[nameLast]
+            namedRange = f"{slave['name']} {rrange[0]} → {rrange[1]}"
+
             if self.mclient.connected :
-              rr = await self.mclient.read_holding_registers(raddress, count=2, device_id=slave['address'])
+              first = self.modbusRegAll[nameFirst]
+              last = self.modbusRegAll[nameLast]
+              rr = await self.mclient.read_holding_registers(first, count=last-first+1, device_id=slave['address'])
               if rr.isError():
-                self.logger.warning(f"{slave['name']}.{raddress}: {rr}")
+                self.logger.warning(f"{namedRange}: {rr}")
                 break
-              msg = Msg(f"{source}/{topic}", rr.registers[0])
+              msgs = []
+              payload = {}
+              for i in range(last-first+1) :
+                payload[nameFirst + str(i)] = float(rr.registers[i])/10
+              msg = Msg(f"{source}/{topic}", payload)
               msg.timestamp = timestamp
-              msg.topic = topic   # lookup caxton influx handler !!!!!
               msg.source = source
-      #       self.logger.debug(f"Created msg {msg}")
+
+              # setup downsampling
+              msg.measurement = self.config.get(self.root,'measurement',None) ;
+              msg.reportOnDiff = 0.5
+              msg.maxPeriodSecs = 10 * 60
+
+              # set influx specific fields
+              msg.fields = payload
+              msg.tags   = {'source': source}
+
+              self.logger.debug(f"Created msg {msg}")
               msgs.append(msg)
+
+              self.yahub.route(msgs)
+              self.logger.debug(f"range read from  {namedRange}")
             else :
-              self.logger.warning(f"socket is closed")
+              self.logger.warning(f"not connected")
 
 
           except ModbusIOException as me :
-            self.logger.warning(f"{slave['name']}.{raddress}: {me.message}")
+            self.logger.warning(f"{namedRange}: {me.message}")
 
             # timeouts and task shutdowns throw the SAME exception
             # so have to test the string to determine action
@@ -143,11 +166,9 @@ class Ymodbus:
               raise(me)
 
           except ModbusException as me :
-            self.logger.exception(f"{slave['name']}.{raddress}: {me})")
-
-        self.yahub.route(msgs)
-        self.logger.info(f"{len(msgs)} modbus registers read from {slave['name']} {firstTopic} → {lastTopic}")
+            self.logger.exception(f"{namedRange}: {me})")
 
       except ConnectionException as ce :
         self.logger.warning(f"{slave['name']}: {ce.message}")
         await asyncio.sleep(30)
+
