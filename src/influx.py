@@ -92,7 +92,7 @@ class Yinflux :
       #self.logger.warning(er);
       self.logger.warning(f"{str(er)} write failed. Point:{str(point)}");
       self.numErrors += 1
-      self.logger.exception(f'error count:{self.numErrors} {ex}')
+      self.logger.exception(f'error count:{self.numErrors} {er}')
       if self.numErrors > 10 :
         raise TerminateTaskGroup();
       else :
