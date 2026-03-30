@@ -33,10 +33,10 @@ class Ymodbus:
     # setting debug prints all PDUs
     pymodbus_apply_logging_config("CRITICAL")
 
-    port = config.get(root,'port')
+    self.port = config.get(root,'port')
     framer=FramerType.RTU
     self.mclient = AsyncModbusSerialClient(
-        port,
+        self.port,
         framer=framer,
         # timeout=10,
         # retries=3,
@@ -106,13 +106,17 @@ class Ymodbus:
 
   async def poll(self):
     slaves = self.config.get(self.root, 'slaves')
-    timestamp = (math.floor(time.time()/6)) * 6  # round to nearest 10 seconds
-    for slave in slaves :
-      try :
+    timestamp = (math.floor(time.time()/6)) * 6  # round to nearest 10 second
+    try:
+
+      for slave in slaves :
         self.logger.debug(f"slave {slave}")
 
         for rrange in self.ranges :
           try :
+            if not self.mclient.connected :
+              raise(ConnectionException(f'not connected via {self.port}'))
+
             source = f"{slave['name']}"
             topic = f"{rrange[0]}"
             nameFirst = rrange[0]
@@ -120,39 +124,34 @@ class Ymodbus:
             first = self.modbusRegAll[nameFirst]
             last = self.modbusRegAll[nameLast]
             namedRange = f"{slave['name']} {rrange[0]} → {rrange[1]}"
+            first = self.modbusRegAll[nameFirst]
+            last = self.modbusRegAll[nameLast]
+            rr = await self.mclient.read_holding_registers(first, count=last-first+1, device_id=slave['address'])
+            if rr.isError():
+              self.logger.warning(f"{namedRange}: {rr}")
+              break
+            msgs = []
+            payload = {}
+            for i in range(last-first+1) :
+              payload[nameFirst + str(i)] = float(rr.registers[i])/10
+            msg = Msg(f"{source}/{topic}", payload)
+            msg.timestamp = timestamp
+            msg.source = source
 
-            if self.mclient.connected :
-              first = self.modbusRegAll[nameFirst]
-              last = self.modbusRegAll[nameLast]
-              rr = await self.mclient.read_holding_registers(first, count=last-first+1, device_id=slave['address'])
-              if rr.isError():
-                self.logger.warning(f"{namedRange}: {rr}")
-                break
-              msgs = []
-              payload = {}
-              for i in range(last-first+1) :
-                payload[nameFirst + str(i)] = float(rr.registers[i])/10
-              msg = Msg(f"{source}/{topic}", payload)
-              msg.timestamp = timestamp
-              msg.source = source
+            # setup downsampling
+            msg.measurement = self.config.get(self.root,'measurement',None) ;
+            msg.reportOnDiff = 0.5
+            msg.maxPeriodSecs = 10 * 60
 
-              # setup downsampling
-              msg.measurement = self.config.get(self.root,'measurement',None) ;
-              msg.reportOnDiff = 0.5
-              msg.maxPeriodSecs = 10 * 60
+            # set influx specific fields
+            msg.fields = payload
+            msg.tags   = {'source': source}
 
-              # set influx specific fields
-              msg.fields = payload
-              msg.tags   = {'source': source}
+            self.logger.debug(f"Created msg {msg}")
+            msgs.append(msg)
 
-              self.logger.debug(f"Created msg {msg}")
-              msgs.append(msg)
-
-              self.yahub.route(msgs)
-              self.logger.debug(f"range read from  {namedRange}")
-            else :
-              self.logger.warning(f"not connected")
-
+            self.yahub.route(msgs)
+            self.logger.debug(f"range read from  {namedRange}")
 
           except ModbusIOException as me :
             self.logger.warning(f"{namedRange}: {me.message}")
@@ -165,10 +164,7 @@ class Ymodbus:
             else:
               raise(me)
 
-          except ModbusException as me :
-            self.logger.exception(f"{namedRange}: {me})")
-
-      except ConnectionException as ce :
-        self.logger.warning(f"{slave['name']}: {ce.message}")
-        await asyncio.sleep(30)
+    except (ConnectionException, ModbusException) as ce :
+      self.logger.warning(f"{ce}, sleeping 600s")
+      await asyncio.sleep(600)
 
