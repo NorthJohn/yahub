@@ -88,7 +88,7 @@ class Yahub:
                                   lambda signame=signame: tg.create_task(self.ask_exit(tg, signame),name='SignalHandler'))
       from yrun import getIP
       host = getIP()
-      self.hostname = host['hostname']
+      self.hostname = host['hostname'] if host else 'offline'
       self.logger.info(f'{host}')
 
       self.yrun = Yrun(self, config, 'yrun')
