@@ -14,6 +14,8 @@ class Yrun:
   def start(self):
     try:
       asyncio.run(self.run())
+    except asyncio.CancelledError as ce:
+      self.logger.debug('coroutine cancelled')
     except RuntimeError as re:
       self.logger.error(re)
     except ExceptionGroup as eg:

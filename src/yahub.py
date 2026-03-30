@@ -11,7 +11,7 @@ from config import Config
 from yrun import Yrun
 
 NAME = 'yahub'
-VERSION = 0.34
+VERSION = 0.40
 
 # the concept of topic and payload concept comes from node-red
 
@@ -42,6 +42,7 @@ class Yahub:
   consumersOfData = []
   consumersOfControl = []
   #threads = []
+  hostname = 'unknown'
   tasks = set()
   logger = None
 
@@ -67,8 +68,8 @@ class Yahub:
       asyncio.run(self.run(), debug=False)
     except* TerminateTaskGroup as tge:
       self.logger.debug(f"async taskgroup terminated")
-
-    self.logger.info(f"shutdown complete")
+    finally:
+      self.logger.info(f"async taskgroup shutdown complete")
 
   async def ask_exit(self, tg, signame):
     self.logger.info(f"shutdown initiated, {signame} received")
@@ -85,9 +86,10 @@ class Yahub:
       for signame in ('SIGINT', 'SIGTERM'):
           loop.add_signal_handler(getattr(signal, signame),
                                   lambda signame=signame: tg.create_task(self.ask_exit(tg, signame),name='SignalHandler'))
-
       from yrun import getIP
-      self.logger.info(f'{getIP()}')
+      host = getIP()
+      self.hostname = host['hostname']
+      self.logger.info(f'{host}')
 
       self.yrun = Yrun(self, config, 'yrun')
       self.stask = tg.create_task(self.yrun.run(), name='yrun')
@@ -101,7 +103,6 @@ class Yahub:
 
       self.consumersOfData.append(mqtt)
       self.consumersOfControl.append(mqtt)
-
 
       mqtt.subscribe('request/#')
 
@@ -135,7 +136,6 @@ class Yahub:
         self.ntask = tg.create_task(self.nasa.run(), name='nasa')
 
       self.logger.info('startup completed')
-
 
 
   def route(self, msg):

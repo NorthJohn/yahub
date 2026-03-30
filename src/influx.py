@@ -54,6 +54,15 @@ class Yinflux :
             await self.writeFieldSet(msg)
             self.queue.task_done()
             await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
+
+      # make sure we escape run loop if taskgroup is closing down
+      except asyncio.CancelledError as ce:
+        self.logger.debug('coroutine cancelled')
+        break                               # but exit through finally
+
+      except (ConnectionRefusedError, NewConnectionError) as acceptableException:
+        self.logger.warning(f'{acceptableException}')
+
       except Exception as ex :
         self.numErrors += 1
         self.logger.exception(f'error count:{self.numErrors} {ex}')
@@ -87,6 +96,10 @@ class Yinflux :
       self.clientInfluxWrite.write(self.bucket, record=point)
       self.logger.debug(f"written {str(point)}");
       self.numPoints = self.numPoints + 1
+      self.numErrors = max(self.numErrors - 1, 0)  # decrement error counter down to zero
+
+    except asyncio.CancelledError as ce:
+      pass
 
     except (InfluxDBError, ValueError, TimeoutError) as er:
       #self.logger.warning(er);

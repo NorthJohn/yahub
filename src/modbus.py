@@ -47,15 +47,22 @@ class Ymodbus:
     )
 
   async def run(self):
+
     try:
       self.logger.debug('coroutine started')
       self.loadRegisterDefinitions()
       await self.connect()
+      await asyncio.sleep(2)  # not necessary but wait for MQTT and influx to connect
       while True:
         val = await self.poll()
         await asyncio.sleep(self.config.get(self.root, 'poll_interval', 60))
+
+    except asyncio.CancelledError as ce:
+      self.logger.debug('coroutine cancelled')
+
     except Exception as ex:
       self.logger.exception(f'coroutine stopping {ex}')
+
     finally:
       pass
       #await self.disconnect()
@@ -152,6 +159,7 @@ class Ymodbus:
 
             self.yahub.route(msgs)
             self.logger.debug(f"range read from  {namedRange}")
+
 
           except ModbusIOException as me :
             self.logger.warning(f"{namedRange}: {me.message}")
