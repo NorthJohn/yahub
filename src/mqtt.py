@@ -20,7 +20,7 @@ class Ymqtt:
     self.config = config
     self.root = root
     self.unacked_publish = set()
-    self.logger = logging.getLogger()
+    self.logger = logging.getLogger(root)
     self.subscribeTopics = []
 
   def enqueue(self, msg):

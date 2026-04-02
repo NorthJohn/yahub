@@ -28,7 +28,7 @@ class Ymodbus:
     self.root = root
     self.yahub = yahub
     self.modbusMap = []
-    self.logger = logging.getLogger()
+    self.logger = logging.getLogger(root)
 
     # setting debug prints all PDUs
     pymodbus_apply_logging_config("CRITICAL")

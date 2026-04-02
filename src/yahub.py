@@ -48,16 +48,17 @@ class Yahub:
 
   def __init__(self, args):
 
-    logging.basicConfig(level=args.loglevel.upper(),
-                      format='%(asctime)s %(levelname)-3s %(module)s %(message)s',
-                      datefmt='%H:%M:%S')
+    logfmt = '%(asctime)s %(levelname)-5s %(name)s %(message)s'
+    logging.basicConfig(level=args.loglevel.upper(),format=logfmt, datefmt='%H:%M:%S')
 
     # create a log handler that writes to an intermediate queue
     from asyncioQueueLogHandler import AsyncioQueueLogHandler
     self.queueLogHandler = AsyncioQueueLogHandler()
-    # set a format
-    formatter = logging.Formatter('%(asctime)s %(levelname)-3s %(module)s %(message)s', datefmt='%H:%M:%S')
+    # set a format and log level
+    formatter = logging.Formatter(logfmt, datefmt='%H:%M:%S')
     self.queueLogHandler.setFormatter(formatter)
+    self.queueLogHandler.setLevel(logging.INFO)
+
     logging.getLogger('').addHandler(self.queueLogHandler)
     self.logger = logging.getLogger('yahub')
     self.configFile = args.config
@@ -65,7 +66,7 @@ class Yahub:
 
   def start(self):
     try:
-      asyncio.run(self.run(), debug=False)
+      asyncio.run(self.run())
     except* TerminateTaskGroup as tge:
       self.logger.debug(f"async taskgroup terminated")
     finally:

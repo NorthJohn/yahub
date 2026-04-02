@@ -18,7 +18,7 @@ class Yinflux :
     self.config = config
     self.root = root
     self.queue = asyncio.Queue(maxsize=100)
-    self.logger = logging.getLogger()
+    self.logger = logging.getLogger(root)
 
     #self.mapper = mapper = load_config("solis_modbus.yaml");
 
@@ -47,7 +47,7 @@ class Yinflux :
           #    flush_interval=self.config.get(self.root,'flush_interval')
           #)
         ) as self.clientInfluxWrite :
-          logging.info(f"influxDB instantiated, bucket '{self.bucket}'");
+          self.logger.info(f"influxDB instantiated, bucket '{self.bucket}'");
           while True:   # the message loop
             msg = await self.queue.get()
             logging.debug(f"writing {msg}");
@@ -60,7 +60,7 @@ class Yinflux :
         self.logger.debug('coroutine cancelled')
         break                               # but exit through finally
 
-      except (ConnectionRefusedError, NewConnectionError) as acceptableException:
+      except (ConnectionRefusedError, ConnectionError) as acceptableException:
         self.logger.warning(f'{acceptableException}')
 
       except Exception as ex :
@@ -73,7 +73,7 @@ class Yinflux :
 
       finally:
         self.clientInfluxWrite.close()      # have to call close() to save all data
-        logging.info(f"write buffer flushed and closed");
+        self.logger.info(f"write buffer flushed and closed");
 
 
   async def writeFieldSet(self, msg):

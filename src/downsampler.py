@@ -19,7 +19,7 @@ class Downsampler:
 
   def __init__(self):
     self.storeMap = {}
-    self.logger = logging.getLogger()
+    self.logger = logging.getLogger('downsampler')
 
 
   def digest(self, msg):

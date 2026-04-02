@@ -8,8 +8,7 @@ class Yrun:
 
   def __init__(self, yahub, config, root):
     self.yahub = yahub
-    logging.basicConfig(level=logging.DEBUG)
-    self.logger = logging.getLogger(__name__)
+    self.logger = logging.getLogger(root)
 
   def start(self):
     try:
