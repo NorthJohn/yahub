@@ -162,15 +162,11 @@ class Ymodbus:
 
 
           except ModbusIOException as me :
+            if 'Request cancelled outside library.' in me.message :
+              raise asyncio.CancelledError('re-raised')
+
             self.logger.warning(f"{namedRange}: {me.message}")
-
-            # timeouts and task shutdowns throw the SAME exception
-            # so have to test the string to determine action
-
-            if 'No response received' in me.message :
-              await asyncio.sleep(60)
-            else:
-              raise(me)
+            await asyncio.sleep(60)    
 
     except (ConnectionException, ModbusException) as ce :
       self.logger.warning(f"{ce}, sleeping 600s")
