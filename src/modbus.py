@@ -42,7 +42,7 @@ class Ymodbus:
         # retries=3,
         baudrate=9600,
         bytesize=8,
-        # parity='N',
+        parity='E',
         stopbits=1
     )
 
@@ -114,6 +114,7 @@ class Ymodbus:
   async def poll(self):
     slaves = self.config.get(self.root, 'slaves')
     timestamp = (math.floor(time.time()/6)) * 6  # round to nearest 10 second
+    regToAddr = lambda x : x - 1
     try:
 
       for slave in slaves :
@@ -133,7 +134,7 @@ class Ymodbus:
             namedRange = f"{slave['name']} {rrange[0]} → {rrange[1]}"
             first = self.modbusRegAll[nameFirst]
             last = self.modbusRegAll[nameLast]
-            rr = await self.mclient.read_holding_registers(first, count=last-first+1, device_id=slave['address'])
+            rr = await self.mclient.read_input_registers(regToAddr(first), count=last-first+1, device_id=slave['address'])
             if rr.isError():
               self.logger.warning(f"{namedRange}: {rr}")
               break
