@@ -121,7 +121,7 @@ class Yonewire:
         msg.timestamp = timestamp
         msg.measurement = self.config.get(self.root,'measurement','temperature') ;
         msg.reportOnDiff = 0.5
-        msg.maxPeriodSecs = 10 * 60
+        msg.maxPeriodSecs = 30 * 60
 
         if sensorName in sensorLocation :
           msg.source = sensorName ;
