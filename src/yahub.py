@@ -11,7 +11,7 @@ from config import Config
 from yrun import Yrun
 
 NAME = 'yahub'
-VERSION = 0.34
+VERSION = 0.40
 
 # the concept of topic and payload concept comes from node-red
 
@@ -42,21 +42,23 @@ class Yahub:
   consumersOfData = []
   consumersOfControl = []
   #threads = []
+  hostname = 'unknown'
   tasks = set()
   logger = None
 
   def __init__(self, args):
 
-    logging.basicConfig(level=args.loglevel.upper(),
-                      format='%(asctime)s %(levelname)-3s %(module)s %(message)s',
-                      datefmt='%H:%M:%S')
+    logfmt = '%(asctime)s %(levelname)-5s %(name)s %(message)s'
+    logging.basicConfig(level=args.loglevel.upper(),format=logfmt, datefmt='%H:%M:%S')
 
     # create a log handler that writes to an intermediate queue
     from asyncioQueueLogHandler import AsyncioQueueLogHandler
     self.queueLogHandler = AsyncioQueueLogHandler()
-    # set a format
-    formatter = logging.Formatter('%(asctime)s %(levelname)-3s %(module)s %(message)s', datefmt='%H:%M:%S')
+    # set a format and log level
+    formatter = logging.Formatter(logfmt, datefmt='%H:%M:%S')
     self.queueLogHandler.setFormatter(formatter)
+    self.queueLogHandler.setLevel(logging.INFO)
+
     logging.getLogger('').addHandler(self.queueLogHandler)
     self.logger = logging.getLogger('yahub')
     self.configFile = args.config
@@ -64,11 +66,11 @@ class Yahub:
 
   def start(self):
     try:
-      asyncio.run(self.run(), debug=False)
+      asyncio.run(self.run())
     except* TerminateTaskGroup as tge:
       self.logger.debug(f"async taskgroup terminated")
-
-    self.logger.info(f"shutdown complete")
+    finally:
+      self.logger.info(f"async taskgroup shutdown complete")
 
   async def ask_exit(self, tg, signame):
     self.logger.info(f"shutdown initiated, {signame} received")
@@ -85,16 +87,17 @@ class Yahub:
       for signame in ('SIGINT', 'SIGTERM'):
           loop.add_signal_handler(getattr(signal, signame),
                                   lambda signame=signame: tg.create_task(self.ask_exit(tg, signame),name='SignalHandler'))
-
       from yrun import getIP
-      self.logger.info(f'{getIP()}')
+      host = getIP()
+      self.hostname = host['hostname'] if host else 'offline'
+      self.logger.info(f'{host}')
 
       self.yrun = Yrun(self, config, 'yrun')
       self.stask = tg.create_task(self.yrun.run(), name='yrun')
 
       from mqtt import Ymqtt
-      mqtt = Ymqtt(self, config,'cloudMQTT',)
-      self.qtask = tg.create_task(mqtt.run(), name='cloudMQTT')
+      mqtt = Ymqtt(self, config,'mqttCloud',)
+      self.qtask = tg.create_task(mqtt.run(), name='mqttCloud')
 
       self.queueLogHandler.addListener(mqtt)
       self.ltask = tg.create_task(self.queueLogHandler.run(), name='AsyncioQueueLogHandler')
@@ -102,13 +105,18 @@ class Yahub:
       self.consumersOfData.append(mqtt)
       self.consumersOfControl.append(mqtt)
 
-
       mqtt.subscribe('request/#')
 
-      if config.get('cloudInflux','enable', False):
+      if config.get('influxLocal','enable', False):
         from influx import Yinflux
-        influx = Yinflux(config, 'cloudInflux')
-        self.itask = tg.create_task(influx.run(), name='cloudInflux')
+        influx = Yinflux(config, 'influxLocal')
+        self.itask = tg.create_task(influx.run(), name='influxLocal')
+        self.consumersOfData.append(influx)
+
+      if config.get('influxCloud','enable', False):
+        from influx import Yinflux
+        influx = Yinflux(config, 'influxCloud')
+        self.itask = tg.create_task(influx.run(), name='influxCloud')
         self.consumersOfData.append(influx)
 
       if config.get('serialModbus','enable', False):
@@ -129,7 +137,6 @@ class Yahub:
         self.ntask = tg.create_task(self.nasa.run(), name='nasa')
 
       self.logger.info('startup completed')
-
 
 
   def route(self, msg):

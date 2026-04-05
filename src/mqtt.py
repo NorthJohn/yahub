@@ -1,6 +1,6 @@
 
 
-import logging,asyncio,queue,time,random
+import logging,asyncio,queue,time,random,json,socket
 
 import paho.mqtt.client as mqtt
 
@@ -20,7 +20,7 @@ class Ymqtt:
     self.config = config
     self.root = root
     self.unacked_publish = set()
-    self.logger = logging.getLogger()
+    self.logger = logging.getLogger(root)
     self.subscribeTopics = []
 
   def enqueue(self, msg):
@@ -39,6 +39,8 @@ class Ymqtt:
         self.publish(msg)
         self.queue.task_done()
         await asyncio.sleep(0.5)        # limit the message rate to 2 in case there's loooping
+    except asyncio.CancelledError as ce:
+      self.logger.debug('coroutine cancelled')
     except Exception as ex:
       self.logger.exception(f'coroutine stopping {ex}')
       raise TerminateTaskGroup();
@@ -63,7 +65,7 @@ class Ymqtt:
     self.mqttc.on_disconnect = self.onConnectDisconnect
     #self.mqttc.on_log     = lambda client, userdata, paho_log_level, messages : logging.info(messages)
     self.mqttc.on_subscribe = lambda client, userdata, mid, reason_code_list, properties: \
-      self.onSubcribe(reason_code_list, f'subscribe mid:{mid} {reason_code_list}')
+      self.onSubscribe(reason_code_list, f'subscribe mid:{mid} {reason_code_list}')
     self.mqttc.on_publish = lambda client, userdata, mid, reason_code, properties: \
       self.onPublish(userdata, mid, reason_code)
     self.mqttc.on_message = self.onMessage
@@ -94,12 +96,14 @@ class Ymqtt:
     else:
       self.subscribeTopics.append(topic)
 
-  def onSubcribe(self, reason_code_list, text):
-      self.logger.info(str(reason_code_list))   # needs more work
+  def onSubscribe(self, reason_code_list, text):
+      self.logger.debug(f"subscribed {str(reason_code_list)}")   # needs more work
 
   def publish(self, msg):
     if self.mqttc and self.mqttc.is_connected():
-      msg_info = self.mqttc.publish(msg.topic, msg.payload, qos=1)
+      payload = json.dumps(msg.payload)  if type(msg.payload) is dict else msg.payload
+      topic = f"{self.yahub.hostname}/{msg.topic}"
+      msg_info = self.mqttc.publish(topic, payload, qos=1)
       self.unacked_publish.add(msg_info.mid)
       msg_info.wait_for_publish()
 
@@ -124,5 +128,3 @@ class Ymqtt:
       self.mqttc.disconnect()
     # self.thread.join()     # this isn't quite right
     time.sleep(1)
-
-

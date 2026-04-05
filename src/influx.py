@@ -18,7 +18,7 @@ class Yinflux :
     self.config = config
     self.root = root
     self.queue = asyncio.Queue(maxsize=100)
-    self.logger = logging.getLogger()
+    self.logger = logging.getLogger(root)
 
     #self.mapper = mapper = load_config("solis_modbus.yaml");
 
@@ -47,13 +47,22 @@ class Yinflux :
           #    flush_interval=self.config.get(self.root,'flush_interval')
           #)
         ) as self.clientInfluxWrite :
-          logging.info(f"influxDB instantiated, bucket '{self.bucket}'");
+          self.logger.info(f"influxDB instantiated, bucket '{self.bucket}'");
           while True:   # the message loop
             msg = await self.queue.get()
             logging.debug(f"writing {msg}");
             await self.writeFieldSet(msg)
             self.queue.task_done()
             await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
+
+      # make sure we escape run loop if taskgroup is closing down
+      except asyncio.CancelledError as ce:
+        self.logger.debug('coroutine cancelled')
+        break                               # but exit through finally
+
+      except (ConnectionRefusedError, ConnectionError) as acceptableException:
+        self.logger.warning(f'{acceptableException}')
+
       except Exception as ex :
         self.numErrors += 1
         self.logger.exception(f'error count:{self.numErrors} {ex}')
@@ -64,7 +73,7 @@ class Yinflux :
 
       finally:
         self.clientInfluxWrite.close()      # have to call close() to save all data
-        logging.info(f"write buffer flushed and closed");
+        self.logger.info(f"write buffer flushed and closed");
 
 
   async def writeFieldSet(self, msg):
@@ -87,12 +96,16 @@ class Yinflux :
       self.clientInfluxWrite.write(self.bucket, record=point)
       self.logger.debug(f"written {str(point)}");
       self.numPoints = self.numPoints + 1
+      self.numErrors = max(self.numErrors - 1, 0)  # decrement error counter down to zero
+
+    except asyncio.CancelledError as ce:
+      pass
 
     except (InfluxDBError, ValueError, TimeoutError) as er:
       #self.logger.warning(er);
       self.logger.warning(f"{str(er)} write failed. Point:{str(point)}");
       self.numErrors += 1
-      self.logger.exception(f'error count:{self.numErrors} {ex}')
+      self.logger.exception(f'error count:{self.numErrors} {er}')
       if self.numErrors > 10 :
         raise TerminateTaskGroup();
       else :

@@ -28,49 +28,73 @@ class Ymodbus:
     self.root = root
     self.yahub = yahub
     self.modbusMap = []
-    self.logger = logging.getLogger()
+    self.logger = logging.getLogger(root)
 
     # setting debug prints all PDUs
     pymodbus_apply_logging_config("CRITICAL")
 
-    port = config.get(root,'port')
+    self.port = config.get(root,'port')
     framer=FramerType.RTU
     self.mclient = AsyncModbusSerialClient(
-        port,
+        self.port,
         framer=framer,
         # timeout=10,
         # retries=3,
         baudrate=9600,
         bytesize=8,
-        parity="N",
+        # parity='N',
         stopbits=1
     )
 
-#  def start(self):
-#    self.thread = asyncio.run(self.run)
-#    #self.thread.start()
-
   async def run(self):
+
     try:
       self.logger.debug('coroutine started')
       self.loadRegisterDefinitions()
       await self.connect()
+      await asyncio.sleep(2)  # not necessary but wait for MQTT and influx to connect
       while True:
         val = await self.poll()
         await asyncio.sleep(self.config.get(self.root, 'poll_interval', 60))
+
+    except asyncio.CancelledError as ce:
+      self.logger.debug('coroutine cancelled')
+
     except Exception as ex:
       self.logger.exception(f'coroutine stopping {ex}')
 
+    finally:
+      pass
+      #await self.disconnect()
+
 
   def loadRegisterDefinitions(self):
-    #rows = None
     mapName = self.config.get(self.root, 'map')
+    self.modbusRegAll = {}
     with open(mapName, newline='') as csvfile:
       reader = csv.DictReader(csvfile)
-      self.modbusMap = [row for row in reader]
-    self.logger.info(f"Modbus register map loaded {mapName}")
+      for row in reader :
+        try :
+          self.modbusRegAll[row['name']] = int(row['register'])
+        except Exception as e :
+          pass
+    registerRanges = self.config.get(self.root, 'registers')
+    self.ranges = []
+    numRegisters = 0
+    for rrange in registerRanges :        # copy across known registers
+      nameFirst = rrange[0]
+      nameLast = rrange[1]
+      if nameFirst in self.modbusRegAll and nameLast in self.modbusRegAll:
+        first = self.modbusRegAll[nameFirst]
+        last = self.modbusRegAll[nameLast]
+        numRegisters += last - first + 1
+        self.ranges.append([nameFirst, nameLast])
+      else:
+        self.logger.debug(f'{rrange} not mapped to numeric value')
 
-  # rows = [(row) =>  for row in rows]
+    self.logger.info(f"Scanning {numRegisters} registers in {len(self.ranges)} ranges selected from {mapName}")
+
+    # rows = [(row) =>  for row in rows]
 
 #  for row in rows:
 #    m = re.search("\.[\d]+$",f"{row['Default value']}")
@@ -79,62 +103,72 @@ class Ymodbus:
 
   async def connect(self):
     await self.mclient.connect()
+    self.logger.debug(f"connected")
 
-  def poll3JUNK(self):
-    rr = self.mclient.read_holding_registers(4, count=12, slave=1)
-    if rr.isError():
-      self.logger.warning(f"Received exception from device ({rr})")
-    assert rr.registers[0] == 17
-    assert rr.registers[1] == 17
 
-    return rr
+  async def disconnect(self):
+    if self.mclient.connected:
+      await self.mclient.close()
+    self.logger.debug(f"disconnected")
 
   async def poll(self):
     slaves = self.config.get(self.root, 'slaves')
-    registers = self.config.get(self.root, 'registers')
-    timestamp = (math.floor(time.time()/60)) * 60  # round to nearest minute
-    #self.logger.debug(f"slaves {slaves}")
-    for slave in slaves :
-      try :
+    timestamp = (math.floor(time.time()/6)) * 6  # round to nearest 10 second
+    try:
+
+      for slave in slaves :
         self.logger.debug(f"slave {slave}")
-        msgs = []
-        firstTopic = None
-        lastTopic = None
-        try :
-          for r in registers:
-            rr = await self.mclient.read_holding_registers(2, count=12, slave=slave['address'])
+
+        for rrange in self.ranges :
+          try :
+            if not self.mclient.connected :
+              raise(ConnectionException(f'not connected via {self.port}'))
+
+            source = f"{slave['name']}"
+            topic = f"{rrange[0]}"
+            nameFirst = rrange[0]
+            nameLast = rrange[1]
+            first = self.modbusRegAll[nameFirst]
+            last = self.modbusRegAll[nameLast]
+            namedRange = f"{slave['name']} {rrange[0]} → {rrange[1]}"
+            first = self.modbusRegAll[nameFirst]
+            last = self.modbusRegAll[nameLast]
+            rr = await self.mclient.read_holding_registers(first, count=last-first+1, device_id=slave['address'])
             if rr.isError():
-              self.logger.warning(f"Received exception from device ({rr})")
+              self.logger.warning(f"{namedRange}: {rr}")
               break
-            source = f"slave{r}"
-            topic = f"{r}"
-            if not firstTopic:
-              firstTopic = topic
-            lastTopic = topic
-            msg = Msg(f"{source}/{topic}", rr.registers[0])
+            msgs = []
+            payload = {}
+            for i in range(last-first+1) :
+              payload[nameFirst + str(i)] = float(rr.registers[i])/10
+            msg = Msg(f"{source}/{topic}", payload)
             msg.timestamp = timestamp
-            msg.topic = topic   # lookup caxton influx handler !!!!!
             msg.source = source
-    #       self.logger.debug(f"Created msg {msg}")
+
+            # setup downsampling
+            msg.measurement = self.config.get(self.root,'measurement',None) ;
+            msg.reportOnDiff = 0.5
+            msg.maxPeriodSecs = 10 * 60
+
+            # set influx specific fields
+            msg.fields = payload
+            msg.tags   = {'source': source}
+
+            self.logger.debug(f"Created msg {msg}")
             msgs.append(msg)
 
-        except ModbusIOException as me :
-          self.logger.warning(me.message)
+            self.yahub.route(msgs)
+            self.logger.debug(f"range read from  {namedRange}")
 
-          # timeouts and task shutdowns throw the SAME exception
-          # so have to test the string to determine action
 
-          if 'No response received' in me.message :
-            await asyncio.sleep(60)
-          else:
-            raise(me)
+          except ModbusIOException as me :
+            if 'Request cancelled outside library.' in me.message :
+              raise asyncio.CancelledError('re-raised')
 
-        except ModbusException as me :
-          self.logger.exception(f"Received exception from device ({me})")
+            self.logger.warning(f"{namedRange}: {me.message}")
+            await asyncio.sleep(60)    
 
-        self.yahub.route(msgs)
-        self.logger.info(f"{slave['name']}: {len(msgs)} modbus registers read: {firstTopic} → {lastTopic}")
+    except (ConnectionException, ModbusException) as ce :
+      self.logger.warning(f"{ce}, sleeping 600s")
+      await asyncio.sleep(600)
 
-      except ConnectionException as me :
-        self.logger.warning(str(me))
-        await asyncio.sleep(30)

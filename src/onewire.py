@@ -16,7 +16,7 @@ class Yonewire:
     self.config = config
     self.root = root
     self.yahub = yahub
-    self.logger = logging.getLogger()
+    self.logger = logging.getLogger(root)
     self.downsampler = Downsampler()
 
 
