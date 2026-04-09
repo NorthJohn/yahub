@@ -32,8 +32,8 @@ class Ymqtt:
 
   async def run(self):
     self.logger.debug('coroutine started')
-    self.connect()
     try :
+      self.connect()
       while True :
         msg = await self.queue.get()
         self.publish(msg)
@@ -41,6 +41,9 @@ class Ymqtt:
         await asyncio.sleep(0.5)        # limit the message rate to 2 in case there's loooping
     except asyncio.CancelledError as ce:
       self.logger.debug('coroutine cancelled')
+    except TimeoutError as te:
+      self.logger.warning(f'connection timeout {ex}')
+      await asyncio.sleep(60)           # possibly no internet
     except Exception as ex:
       self.logger.exception(f'coroutine stopping {ex}')
       raise TerminateTaskGroup();
