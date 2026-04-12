@@ -6,7 +6,7 @@ import asyncio
 import time
 
 from config import Config
-from yahub import Msg, Yahub
+from yahub import Msg, Yahub, TerminateTaskGroup
 
 from pymodbus.client import AsyncModbusSerialClient
 
@@ -51,20 +51,17 @@ class Ymodbus:
     for sla in self.slavesSchedule:
       sla['nextPoll'] = 0
 
-    print(self.slavesSchedule)
-
   async def run(self):
-
+    nextPoll = 0 
     try:
       self.logger.debug('coroutine started')
       self.loadRegisterDefinitions()
 
-
       while True:
-        await asyncio.sleep(2)  # loop safety valve, not necessary but wait for MQTT and influx to connect
+        await asyncio.sleep(2)  # loop safety valve (and wait for MQTT and influx to connect)
         self.slavesSchedule = sorted(self.slavesSchedule, key=lambda slave: slave['nextPoll'])
         if len(self.slavesSchedule) <= 0 :
-          continue
+          break
 
         slave = self.slavesSchedule[0]
         timeDelta =  slave['nextPoll'] - time.time()
@@ -76,11 +73,17 @@ class Ymodbus:
         slave = self.slavesSchedule.pop(0)
         self.logger.debug(f"polling {slave['name']}")
         for rrange in self.ranges :
-          await self.pollOneSlaveAllRegisters(slave, rrange)
-
+          nextPoll = await self.pollOneSlaveAllRegisters(slave, rrange)
+          if (nextPoll > 0) :
+            slave['nextPoll'] = nextPoll 
+            self.slavesSchedule.append(slave)
 
     except asyncio.CancelledError as ce:
       self.logger.debug('coroutine cancelled')
+
+    except ConnectionException as ex:
+      self.logger.error(f'{str(ex)}')
+      self.slavesSchedule.clear()
 
     except Exception as ex:
       self.logger.exception(f'coroutine stopping {ex}')
@@ -116,14 +119,6 @@ class Ymodbus:
 
     self.logger.info(f"Scanning {numRegisters} registers in {len(self.ranges)} ranges selected from {mapName}")
 
-    # rows = [(row) =>  for row in rows]
-
-#  for row in rows:
-#    m = re.search("\.[\d]+$",f"{row['Default value']}")
-#    # self.logging.debug(f"{row['Mnem.']} default {row['Default value']} m {m}")
-#    row['Scale'] = 1 if m else 0
-
-
   async def disconnect(self):
     if self.mclient.connected:
       await self.mclient.close()
@@ -138,7 +133,9 @@ class Ymodbus:
         self.logger.debug(f"re-connected")
 
         # raise(ConnectionException(f'not connected via {self.port}'))
-      timestamp = (math.floor(time.time()/6)) * 6  # round to nearest 10 second
+      timeNow = time.time() 
+      timestamp = (math.floor(timeNow/6)) * 6  # round to nearest 10 second
+      nextPoll = timeNow + self.config.get(self.root, 'poll_interval_long', 600)
       regToAddr = lambda x : x - 1
       source = f"{slave['name']}"
       topic = f"{rrange[0]}"
@@ -175,19 +172,14 @@ class Ymodbus:
 
       self.yahub.route(msgs)
       self.logger.debug(f"range read from  {namedRange}")
-      slave['nextPoll']  = time.time() + self.config.get(self.root, 'poll_interval_short', 20)
+      nextPoll =  timeNow + self.config.get(self.root, 'poll_interval_short', 20)
 
     except ModbusIOException as me :
       if 'Request cancelled outside library.' in me.message :
         raise asyncio.CancelledError('re-raised')
-
       self.logger.warning(f"{namedRange}: {me.message[:60]}")
-      slave['nextPoll']  = time.time() + self.config.get(self.root, 'poll_interval_long', 600)
-
-    except (ConnectionException, ModbusException) as ce :
-      self.logger.warning(f"{ce.message}, sleeping ")
-      slave['nextPoll']  = time.time() + self.config.get(self.root, 'poll_interval_long', 600)
+    
+    finally:
+      return nextPoll
 
 
-    finally :
-      self.slavesSchedule.append(slave)
