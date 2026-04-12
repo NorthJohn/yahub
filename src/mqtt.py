@@ -11,6 +11,8 @@ from yahub import Msg, TerminateTaskGroup
 class Ymqtt:
   connected = False
   mqttc = None
+  connectComplete = asyncio.Event()
+  publishComplete = asyncio.Event()
   queue = asyncio.Queue(maxsize=100)
   thread = None
   loop = asyncio.get_running_loop()
@@ -27,16 +29,29 @@ class Ymqtt:
     try :
       self.queue.put_nowait(msg)
     except asyncio.QueueFull as ex :
-      self.logger.warning(ex) # but just discard and carry on
-
+      self.logger.warning(f"queue full {str(ex)}")   # but just discard and carry on
 
   async def run(self):
     self.logger.debug('coroutine started')
+    self.initMqttc()
     try :
-      self.connect()
       while True :
-        msg = await self.queue.get()
+        if not self.mqttc.is_connected():
+          await self.yahub.networkAvailable.wait()
+          self.connect()
+          await self.connectComplete.wait()
+          self.connectComplete.clear()
+          if not self.mqttc.is_connected():
+            await asyncio.sleep(self.config.get(self.root, 'poll_interval_long', 40))
+            continue
+
+        [_, msg] = await asyncio.gather(
+            self.yahub.networkAvailable.wait(),
+            self.queue.get()
+        )
         self.publish(msg)
+        await self.publishComplete.wait()
+        self.publishComplete.clear()
         self.queue.task_done()
         await asyncio.sleep(0.5)        # limit the message rate to 2 in case there's loooping
     except asyncio.CancelledError as ce:
@@ -48,11 +63,11 @@ class Ymqtt:
       self.logger.exception(f'coroutine stopping {ex}')
       raise TerminateTaskGroup();
     finally:
-      if self.mqttc.is_connected():
+      if self.mqttc and self.mqttc.is_connected():
         self.mqttc.disconnect()       # this will generate a log message
 
 
-  def connect(self):
+  def initMqttc(self):
     config = self.config
     root = self.root
     clientID = config.get(root,'clientID', f'cli-{random.randint(1000,9999)}')
@@ -64,8 +79,9 @@ class Ymqtt:
       self.mqttc.tls_insecure_set(True)
 
     #disable_logger()
-    self.mqttc.on_connect = self.onConnectDisconnect
-    self.mqttc.on_disconnect = self.onConnectDisconnect
+    self.mqttc.on_connect = self.onConnect
+    self.mqttc.on_connect_fail = self.onConnectFail
+    self.mqttc.on_disconnect = self.onDisconnect
     #self.mqttc.on_log     = lambda client, userdata, paho_log_level, messages : logging.info(messages)
     self.mqttc.on_subscribe = lambda client, userdata, mid, reason_code_list, properties: \
       self.onSubscribe(reason_code_list, f'subscribe mid:{mid} {reason_code_list}')
@@ -77,7 +93,10 @@ class Ymqtt:
 
     self.mqttc.loop_start()   # this handles the threading behind the scenes
 
+  def connect(self):
     try:
+      config = self.config
+      root = self.root
       self.mqttc.connect(config.get(root,'host'),
                         config.get(root,'port'),
                         config.get(root,'keepalive', 600))
@@ -85,12 +104,20 @@ class Ymqtt:
     except socket.gaierror as error :
       self.logger.warning(error)
 
-  def onConnectDisconnect(self, client, userdata, flags, reason_code, properties):
+  def onConnect(self, client, userdata, flags, reason_code, properties):
     h = self.config.get(self.root,'host')
-    self.logger.info(f"connected to {h}" if self.mqttc.is_connected() else f"disconnected from {h}")
-    if self.mqttc.is_connected() :
-      for topic in self.subscribeTopics:
-        self.subscribe(topic)
+    self.logger.info(f"connected to {h}")
+    for topic in self.subscribeTopics:
+      self.subscribe(topic)
+    self.connectComplete.set()    
+  
+  def onDisconnect(self, client, userdata, flags, reason_code, properties):
+    h = self.config.get(self.root,'host')
+    self.logger.info(f"disconnected from {h}")
+
+  def onConnectFail(self, client, userdata, flags, reason_code, properties):
+    self.logger.debug(f"connect fail")   # necessary, needs more work
+    self.connectComplete.set()   
 
   def subscribe(self, topic):
     if self.mqttc and self.mqttc.is_connected():   # replace this wth something from api
@@ -108,7 +135,6 @@ class Ymqtt:
       topic = f"{self.yahub.hostname}/{msg.topic}"
       msg_info = self.mqttc.publish(topic, payload, qos=1)
       self.unacked_publish.add(msg_info.mid)
-      msg_info.wait_for_publish()
 
   def onPublish(self, userdata, mid, reason_code):
     text=  f'mid:{mid}'
@@ -117,6 +143,7 @@ class Ymqtt:
       #self.logger.debug(text)
     else:
       self.logger.error(text)
+    self.publishComplete.set()
 
   def onMessage(self, client, userdata, message):
     msg = Msg(message.topic, str(message.payload, 'utf-8'))
@@ -129,5 +156,3 @@ class Ymqtt:
     self.queue.join() # wait for queue to empty
     if self.mqttc.is_connected():
       self.mqttc.disconnect()
-    # self.thread.join()     # this isn't quite right
-    time.sleep(1)
