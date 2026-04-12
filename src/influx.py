@@ -4,27 +4,25 @@ import urllib3
 
 from yahub import Msg, TerminateTaskGroup
 
-from influxdb_client import InfluxDBClient, WriteOptions
-from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
+from influxdb_client import WriteOptions
 from influxdb_client.client.exceptions import InfluxDBError
-
 
 
 class Yinflux :
 
-  def __init__(self, config, root):
-    self.clientInflux = None
-    self.clientInfluxWrite = None
+  def __init__(self, yahub, config, root):
+    self.yahub = yahub
     self.config = config
     self.root = root
-    self.queue = asyncio.Queue(maxsize=100)
+    self.clientInflux = None
+    self.clientInfluxWrite = None
+
+    self.queue = asyncio.Queue(self.config.get(self.root, 'queueSize',100))
     self.logger = logging.getLogger(root)
 
     #self.mapper = mapper = load_config("solis_modbus.yaml");
 
-    self.clientInflux = InfluxDBClient(url=config.get(root,'url'),
-                                       token=config.get(root,'token'),
-                                       org=config.get(root,'org'))
     self.bucket = self.config.get(self.root,'bucket')
     self.numPoints = 0
     self.numErrors = 0
@@ -34,46 +32,54 @@ class Yinflux :
     try :
       self.queue.put_nowait(msg)
     except asyncio.QueueFull as ex :
-      self.logger.warning(ex)   # but just discard and carry on
+      self.logger.warning(f"queue full {str(ex)}")   # but just discard and carry on
 
   async def run(self):
     self.logger.debug('coroutine started')
-    while True:    # the restart loop
-      try :
-        with self.clientInflux.write_api(
-          write_options=SYNCHRONOUS
-          #write_options=WriteOptions(
-          #    batch_size=self.config.get(self.root,'batch_size'),
-          #    flush_interval=self.config.get(self.root,'flush_interval')
-          #)
-        ) as self.clientInfluxWrite :
-          self.logger.info(f"influxDB instantiated, bucket '{self.bucket}'");
-          while True:   # the message loop
-            msg = await self.queue.get()
-            logging.debug(f"writing {msg}");
-            await self.writeFieldSet(msg)
-            self.queue.task_done()
-            await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
 
-      # make sure we escape run loop if taskgroup is closing down
-      except asyncio.CancelledError as ce:
-        self.logger.debug('coroutine cancelled')
-        break                               # but exit through finally
+    async with InfluxDBClientAsync(url=self.config.get(self.root,'url'),
+                                  token=self.config.get(self.root,'token'),
+                                  org=self.config.get(self.root,'org')) as self.clientInflux :
 
-      except (ConnectionRefusedError, ConnectionError) as acceptableException:
-        self.logger.warning(f'{acceptableException}')
+      self.clientInfluxWrite = self.clientInflux.write_api()
+      #write_options=WriteOptions(
+      #    batch_size=self.config.get(self.root,'batch_size'),
+      #    flush_interval=self.config.get(self.root,'flush_interval')
+      #)
+      self.logger.info(f"influxDB instantiated, bucket '{self.bucket}'");
+      
+      while True:   # the message loop
+        try: 
+          [_, msg] = await asyncio.gather(
+              self.yahub.networkAvailable.wait(),
+              self.queue.get()
+          )
+          logging.debug(f"writing {msg}");
+          await self.writeFieldSet(msg)
+          self.queue.task_done()
+          await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
 
-      except Exception as ex :
-        self.numErrors += 1
-        self.logger.exception(f'error count:{self.numErrors} {ex}')
-        if self.numErrors > 100 :
-          raise TerminateTaskGroup();
-        else :
-          await asyncio.sleep(30 * 60)         # sleep for a while then close & reopen client
+        # make sure we escape run loop if taskgroup is closing down
+        except asyncio.CancelledError as ce:
+          self.logger.debug('coroutine cancelled')
+          break                               # but exit through finally
 
-      finally:
-        self.clientInfluxWrite.close()      # have to call close() to save all data
-        self.logger.info(f"write buffer flushed and closed");
+        except (ConnectionRefusedError, ConnectionError) as acceptableException:
+          self.logger.warning(f'{acceptableException}')
+
+        except Exception as ex :
+          self.numErrors += 1
+          if self.numErrors < 100 :
+            self.logger.error(f'error count:{self.numErrors} {str(ex)}, sleeping')
+            await asyncio.sleep(2 * 60)       # sleep for a while then close & reopen client
+          else:
+            self.logger.error(f'error count exceeded :{self.numErrors} {str(ex)}')
+            raise TerminateTaskGroup();
+      
+        finally:
+          pass
+
+    self.logger.info(f"write buffer flushed and closed");
 
 
   async def writeFieldSet(self, msg):
@@ -84,7 +90,7 @@ class Yinflux :
     if not self.clientInfluxWrite:
       self.__enter__()
 
-    self.logger.debug(f"write fieldset");
+    # self.logger.debug(f"write fieldset");
 
     # we're just repackaging another version of msg which is probably unnecessary
     point = {   'measurement' : msg.measurement,
@@ -92,22 +98,9 @@ class Yinflux :
                 'tags'   :      msg.tags,
                 'timestamp':    msg.timestamp * 1000 * 1000 * 1000
     };
-    try:
-      self.clientInfluxWrite.write(self.bucket, record=point)
-      self.logger.debug(f"written {str(point)}");
-      self.numPoints = self.numPoints + 1
-      self.numErrors = max(self.numErrors - 1, 0)  # decrement error counter down to zero
 
-    except asyncio.CancelledError as ce:
-      pass
+    await self.clientInfluxWrite.write(self.bucket, record=point)
+    self.logger.debug(f"written {str(point)}");
+    self.numPoints = self.numPoints + 1
+    self.numErrors = max(self.numErrors - 1, 0)  # decrement error counter down to zero
 
-    except (InfluxDBError, ValueError, TimeoutError) as er:
-      #self.logger.warning(er);
-      self.logger.warning(f"{str(er)} write failed. Point:{str(point)}");
-      self.numErrors += 1
-      self.logger.exception(f'error count:{self.numErrors} {er}')
-      if self.numErrors > 10 :
-        raise TerminateTaskGroup();
-      else :
-        await asyncio.sleep(1 * 60)
-	
