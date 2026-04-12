@@ -45,6 +45,8 @@ class Yahub:
   hostname = 'unknown'
   tasks = set()
   logger = None
+  networkAvailable = asyncio.Event()
+  networkAvailable.set()
 
   def __init__(self, args):
 
@@ -109,13 +111,13 @@ class Yahub:
 
       if config.get('influxLocal','enable', False):
         from influx import Yinflux
-        influx = Yinflux(config, 'influxLocal')
+        influx = Yinflux(self, config, 'influxLocal')
         self.itask = tg.create_task(influx.run(), name='influxLocal')
         self.consumersOfData.append(influx)
 
       if config.get('influxCloud','enable', False):
         from influx import Yinflux
-        influx = Yinflux(config, 'influxCloud')
+        influx = Yinflux(self, config, 'influxCloud')
         self.itask = tg.create_task(influx.run(), name='influxCloud')
         self.consumersOfData.append(influx)
 
