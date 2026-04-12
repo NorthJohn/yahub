@@ -126,6 +126,7 @@ class Ymodbus:
 
 
   async def pollOneSlaveAllRegisters(self, slave, rrange):
+    nextPoll = 0 
     try:
 
       if not self.mclient.connected :
