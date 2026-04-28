@@ -54,7 +54,7 @@ class Yinflux :
               self.yahub.networkAvailable.wait(),
               self.queue.get()
           )
-          logging.debug(f"writing {msg}");
+          self.logger.debug(f"writing {msg}");
           await self.writeFieldSet(msg)
           self.queue.task_done()
           await asyncio.sleep(0.5)        # limit the message rate to 2 per sec in case there's loooping
