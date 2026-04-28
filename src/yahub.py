@@ -132,6 +132,11 @@ class Yahub:
         #if false and self.yonewire.enable:
         self.otask = tg.create_task(self.onewire.run(), name='oneWire')
 
+      if config.get('pulses', 'enable', False):
+        from pulses import Pulses
+        self.pulses = Pulses(self, config,'pulses')
+        self.otask = tg.create_task(self.pulses.run(), name='pulses')
+
       if config.get('nasa', 'enable', False):
         from nasa import YNasa
         self.nasa = YNasa(self, config,'nasa')

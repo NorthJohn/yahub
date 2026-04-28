@@ -10,10 +10,10 @@ class TopicContext:
   numSamples = 0
   begin = True
   def __repr__(self):
-    return f"{self.timestamp} payload:{self.payload} mean:{self.mean} reportedMean:{self.reportedMean} numSamples:{self.numSamples} begin:{self.begin}"
+    return f"{self.timestamp} payload:{toFix(self.payload,2)} mean:{toFix(self.mean,2)} reportedMean:{toFix(self.reportedMean,2)} numSamples:{self.numSamples} begin:{self.begin}"
 
 
-toFix = lambda x, y : x
+toFix = lambda x, p : round(x, p)
 
 class Downsampler:
 
@@ -66,19 +66,24 @@ class Downsampler:
 
     # check if maxPeriod has been reached
 
-    timeDiff = 0; timeDiffLog = '' ; timeTrigger = False ;
-    if hasattr(msg, 'maxPeriodSecs'):
+    timeDiff = 0; timeDiffLog = '' ; minTimeReached = False ; timeTrigger = False ;
+    minSet = hasattr(msg, 'minPeriodSecs')
+    maxSet = hasattr(msg, 'maxPeriodSecs')
+    if minSet or maxSet :
       if not hasattr(msg, 'timestamp'):
-        msg.timestamp = dateNow;
+        msg.timestamp = dateNow
       timeDiff = msg.timestamp - store.timestamp ;
       timeDiffLog = f'Δt:{round(timeDiff) }'
-      timeTrigger = timeDiff > (msg.maxPeriodSecs);
+      if minSet :
+        minTimeReached = timeDiff > (msg.minPeriodSecs)
+      if maxSet :
+        timeTrigger = timeDiff > (msg.maxPeriodSecs)
 
     # check if window size has been reached
 
     windowSizeTrigger = store.numSamples + 1 >= getattr(msg, 'windowSize', 10000)
 
-    endTransition = valueTrigger or timeTrigger or windowSizeTrigger  # write every maxGap
+    endTransition = minTimeReached and (valueTrigger or timeTrigger or windowSizeTrigger)  # write every maxGap
     triggers = 'triggers: ' + ("vt " if valueTrigger else "")  +  ("tt " if timeTrigger else "") + ("ws " if windowSizeTrigger else "");
 
     # to do put triggers into object
@@ -92,7 +97,7 @@ class Downsampler:
     #print(f'3 {store}')
     #breakpoint()
 
-    statusText = f'{msg.topic} {msg.payload} mean:{storeMeanView} num:{store.numSamples} {timeDiffLog}'
+    statusText = f'{msg.topic} {toFix(msg.payload,2)} mean:{toFix(storeMeanView,2)} num:{store.numSamples} {timeDiffLog}'
     self.logger.debug(statusText)
 
     #node.log(`${msg.topic} ${msg.lastPayload} mean: ${store.mean.toFixed(2)}, `
