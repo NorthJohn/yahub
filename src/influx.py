@@ -96,7 +96,7 @@ class Yinflux :
     point = {   'measurement' : msg.measurement,
                 'fields' :      msg.fields,
                 'tags'   :      msg.tags,
-                'timestamp':    msg.timestamp * 1000 * 1000 * 1000
+                'time'   :      msg.time
     };
 
     await self.clientInfluxWrite.write(self.bucket, record=point)
