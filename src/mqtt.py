@@ -57,7 +57,7 @@ class Ymqtt:
     except asyncio.CancelledError as ce:
       self.logger.debug('coroutine cancelled')
     except TimeoutError as te:
-      self.logger.warning(f'connection timeout {ex}')
+      self.logger.warning(f'connection timeout {te}')
       await asyncio.sleep(60)           # possibly no internet
     except Exception as ex:
       self.logger.exception(f'coroutine stopping {ex}')
